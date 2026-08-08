@@ -75,7 +75,14 @@ impl ProjectIndex {
             return Ok(IndexFile::default());
         }
         let text = fs::read_to_string(&self.path)?;
-        Ok(serde_json::from_str(&text)?)
+        // `backfill-index.ps1`/`track-session.ps1` both write via
+        // PowerShell's `Out-File -Encoding utf8`, which prepends a UTF-8
+        // BOM by default -- confirmed on this machine's real
+        // project-index.json (`ef bb bf` before the `{`). serde_json
+        // doesn't skip it, so strip it here rather than fail to parse a
+        // file the hook script itself produced.
+        let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        Ok(serde_json::from_str(text)?)
     }
 
     fn save(&self, file: &IndexFile) -> Result<(), IndexError> {
@@ -245,6 +252,28 @@ mod tests {
             r#"{"projects":[{"path":"/a","name":"a","lastSessionId":"s","lastActive":"t","created":"t","autoStatus":null,"statusOverride":null,"authBackend":null}]}"#,
         )
         .unwrap();
+
+        let projects = index.list().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].path, "/a");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Regression test: found by actually running `aam project list`
+    /// against this machine's real `project-index.json` (`ef bb bf` before
+    /// the `{`) -- `backfill-index.ps1`/`track-session.ps1` both write via
+    /// PowerShell's `Out-File -Encoding utf8`, which prepends a UTF-8 BOM
+    /// by default. `serde_json` doesn't skip it and fails to parse
+    /// otherwise.
+    #[test]
+    fn deserializes_a_file_with_a_leading_utf8_bom() {
+        let (index, dir) = temp_index("bom");
+        fs::create_dir_all(&dir).unwrap();
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(
+            br#"{"projects":[{"path":"/a","name":"a","lastSessionId":"s","lastActive":"t","created":"t","autoStatus":null,"statusOverride":null,"authBackend":null}]}"#,
+        );
+        fs::write(dir.join("project-index.json"), bytes).unwrap();
 
         let projects = index.list().unwrap();
         assert_eq!(projects.len(), 1);

@@ -1,4 +1,8 @@
-use crate::cli::{Command, DeviceAction, ProfileAction, ProviderAction, SkillsAction, SyncAction};
+use crate::cli::{
+    Command, DeviceAction, ProfileAction, ProjectAction, ProviderAction, SessionAction, SkillsAction,
+    SyncAction,
+};
+use aam_memory::ProjectIndex;
 use aam_switcher::{
     build_provider, claude_backend, codex_backend, provider_secret_store, ApplyCodexProvider,
     Profile, ProfileRegistry, Provider, ProviderRecord, ProviderRegistry, Tool,
@@ -16,6 +20,8 @@ pub fn run(command: Command) -> Result<(), Box<dyn Error>> {
         Command::Skills { action } => run_skills(action),
         Command::Device { action } => run_device(action),
         Command::Sync { action } => run_sync(action),
+        Command::Project { action } => run_project(action),
+        Command::Session { action } => run_session(action),
     }
 }
 
@@ -25,6 +31,10 @@ fn profile_registry() -> ProfileRegistry {
 
 fn provider_registry() -> ProviderRegistry {
     ProviderRegistry::open_default()
+}
+
+fn project_index() -> ProjectIndex {
+    ProjectIndex::open_default()
 }
 
 fn run_profile(action: ProfileAction) -> Result<(), Box<dyn Error>> {
@@ -506,6 +516,207 @@ fn run_sync(action: SyncAction) -> Result<(), Box<dyn Error>> {
                  run `aam {tool} {}` to use it",
                 profile.label, profile.label
             );
+            Ok(())
+        }
+    }
+}
+
+/// A session `scan` found, tagged with which local Profile it came from
+/// (needed for `ProjectRecord::profile_label` on adopt, and useful in
+/// `scan`'s own printed report).
+struct TaggedDiscovery {
+    session: aam_memory::DiscoveredSession,
+    profile_label: String,
+}
+
+/// `05.7`: scans every registered Profile's config directory, not just
+/// one -- this is what makes plain `aam session scan`/`adopt` (no
+/// `--tool`/`--profile` needed) actually cover "every account on this
+/// machine" per the design doc.
+fn scan_all_profiles() -> Result<Vec<TaggedDiscovery>, Box<dyn Error>> {
+    let index = project_index();
+    let known_ids: Vec<String> = index.list()?.into_iter().map(|r| r.last_session_id).collect();
+
+    let mut out = Vec::new();
+    for profile in profile_registry().list()? {
+        let discovered = match profile.tool {
+            Tool::Claude => aam_memory::scan_claude_sessions(
+                &profile.config_dir,
+                std::slice::from_ref(&profile.config_dir),
+                &known_ids,
+            ),
+            Tool::Codex => aam_memory::scan_codex_sessions(&profile.config_dir, &known_ids),
+        };
+        out.extend(discovered.into_iter().map(|session| TaggedDiscovery {
+            session,
+            profile_label: profile.label.clone(),
+        }));
+    }
+    Ok(out)
+}
+
+fn run_session(action: SessionAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        SessionAction::Scan => {
+            let found = scan_all_profiles()?;
+            if found.is_empty() {
+                println!("(no undiscovered sessions found across registered profiles)");
+            }
+            for item in &found {
+                println!(
+                    "{:<8} {:<16} {:<50} {}",
+                    item.session.tool_kind,
+                    item.profile_label,
+                    item.session.path,
+                    item.session.auto_status.as_deref().unwrap_or("-")
+                );
+            }
+            if !found.is_empty() {
+                println!("run `aam session adopt` to write these into the local index (syncApproved=false)");
+            }
+            Ok(())
+        }
+
+        SessionAction::Adopt => {
+            let found = scan_all_profiles()?;
+            let index = project_index();
+            // Reuse this machine's sync identity if a vault has already
+            // been set up; an empty string is a legitimate default
+            // otherwise (ProjectRecord's own doc comment covers this --
+            // Memory-Bank tracking doesn't require `aam sync init` first).
+            let device_id = aam_sync::local_identity(&aam_core::aam_home().join("sync"))
+                .ok()
+                .flatten()
+                .map(|i| i.device_id)
+                .unwrap_or_default();
+
+            let mut adopted = 0;
+            for item in &found {
+                aam_memory::adopt_session(&index, &item.session, &device_id, &item.profile_label, None)?;
+                adopted += 1;
+            }
+            println!("adopted {adopted} session(s) (discoverySource=scan, syncApproved=false)");
+            if adopted > 0 {
+                println!(
+                    "run `aam session approve-sync <path...>` (or --all-scanned) before syncing them \
+                     anywhere"
+                );
+            }
+            Ok(())
+        }
+
+        SessionAction::ApproveSync { names, all_scanned } => {
+            let index = project_index();
+            let approved = if all_scanned {
+                aam_memory::approve_all_scanned(&index)?
+            } else {
+                if names.is_empty() {
+                    return Err("no project paths given -- pass some, or use --all-scanned".into());
+                }
+                aam_memory::approve_sync(&index, &names)?
+            };
+            println!("approved {approved} record(s) for sync");
+            Ok(())
+        }
+    }
+}
+
+fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        ProjectAction::List => {
+            let index = project_index();
+            let mut projects = index.list()?;
+            projects.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+            if projects.is_empty() {
+                println!("(no tracked projects yet -- run `aam session scan`/`adopt` to find some)");
+            }
+            for p in &projects {
+                println!(
+                    "{:<24} {:<8} {:<16} {:<50} {}",
+                    p.name,
+                    p.tool_kind,
+                    p.profile_label.as_deref().unwrap_or("-"),
+                    p.path,
+                    p.display_status().unwrap_or("(尚无记录)")
+                );
+            }
+            Ok(())
+        }
+
+        ProjectAction::Show { name } => {
+            let index = project_index();
+            let matches = index.find_fuzzy(&name)?;
+            if matches.is_empty() {
+                return Err(format!("no project matching '{name}' found").into());
+            }
+            for p in &matches {
+                println!("path:            {}", p.path);
+                println!("name:            {}", p.name);
+                println!("tool:            {}", p.tool_kind);
+                println!("profile:         {}", p.profile_label.as_deref().unwrap_or("-"));
+                println!(
+                    "device:          {}",
+                    if p.device_id.is_empty() { "-" } else { &p.device_id }
+                );
+                println!("last active:     {}", p.last_active);
+                println!("created:         {}", p.created);
+                println!("status:          {}", p.display_status().unwrap_or("(尚无记录)"));
+                println!("discovery:       {}", p.discovery_source);
+                println!("sync approved:   {}", p.sync_approved);
+                println!("last session id: {}", p.last_session_id);
+                println!();
+            }
+            Ok(())
+        }
+
+        ProjectAction::Resume { name } => {
+            let index = project_index();
+            let matches = index.find_fuzzy(&name)?;
+            let record = match matches.as_slice() {
+                [] => return Err(format!("no project matching '{name}' found").into()),
+                [one] => one,
+                many => {
+                    println!("multiple projects match '{name}':");
+                    for m in many {
+                        println!("  {} ({})", m.name, m.path);
+                    }
+                    return Err("ambiguous match -- be more specific".into());
+                }
+            };
+
+            // Profile mismatch check: does the recorded Profile still
+            // exist locally? aam has no "currently active default
+            // Profile" concept the way project-tracker's env-var-sniffed
+            // "current shell backend" does -- each `aam claude/codex
+            // <label>` launch is a one-shot process, not persistent shell
+            // state -- so this can only warn about "missing", not
+            // "different from what's active right now".
+            if let Some(label) = &record.profile_label {
+                let tool: Tool = if record.tool_kind == "codex" { Tool::Codex } else { Tool::Claude };
+                if profile_registry().get(tool, label)?.is_none() {
+                    println!(
+                        "warning: this record's Profile '{label}' ({tool}) is not registered on this \
+                         machine -- run `aam profile add` or `aam sync pull-account` first, or resume \
+                         may fail"
+                    );
+                }
+            }
+            if let Some(backend) = &record.auth_backend {
+                if backend != "oauth-subscription" {
+                    println!(
+                        "warning: this project was last touched via backend '{backend}', not the \
+                         official subscription -- resuming an extended-thinking session under a \
+                         different backend/account can fail with a signature error (see \
+                         project-tracker's own troubleshooting notes)"
+                    );
+                }
+            }
+
+            println!("cd \"{}\"", record.path);
+            match record.tool_kind.as_str() {
+                "codex" => println!("codex resume {}", record.last_session_id),
+                _ => println!("claude --resume {}", record.last_session_id),
+            }
             Ok(())
         }
     }

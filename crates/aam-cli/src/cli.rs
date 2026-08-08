@@ -48,6 +48,18 @@ pub enum Command {
         #[command(subcommand)]
         action: SyncAction,
     },
+    /// Reads/updates the project Memory-Bank index (`docs/05-session-memory-bank-module.md`),
+    /// the same `project-index.json` `~/.claude/skills/project-tracker` already maintains.
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
+    /// Session discovery and adoption (`05.7`-`05.9`): find sessions on
+    /// disk not yet in the Memory-Bank index, and explicitly bring them in.
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -248,6 +260,45 @@ pub enum SyncAction {
         /// credential.
         #[arg(long = "as")]
         as_label: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectAction {
+    /// Lists every locally recorded project (`05.6`'s local view -- cross-
+    /// device aggregation lands once `aam session sync` exists).
+    List,
+    /// Shows every locally recorded entry matching `name` (fuzzy: name or
+    /// trailing path segment, case-insensitive).
+    Show { name: String },
+    /// Prints the `cd` + resume command for a project. Never runs it --
+    /// this project cannot change your shell's working directory
+    /// (`05.3`'s "只提示，不搬迁" rule).
+    Resume { name: String },
+}
+
+#[derive(Subcommand)]
+pub enum SessionAction {
+    /// Scans every registered Profile's config directory for sessions not
+    /// yet in the Memory-Bank index. Read-only -- writes nothing (`05.7`).
+    Scan,
+    /// Adopts every session `scan` would report: writes it into the index
+    /// with `discoverySource: scan`, `syncApproved: false` (`05.8`).
+    ///
+    /// `--summarize` is not implemented yet -- it needs `Provider` to grow
+    /// a generic "complete this prompt" capability first (today's trait
+    /// only does config materialization + reachability checks), tracked
+    /// as a follow-up. Codex sessions keep `autoStatus: null` until then.
+    Adopt,
+    /// Marks previously-adopted (`scan`-sourced) records as approved for
+    /// sync (`05.9`). Does not sync anything itself -- `aam session sync`
+    /// (not yet implemented, see `08` #15's sibling item) is what actually
+    /// pushes to WebDAV.
+    ApproveSync {
+        /// Project paths to approve (see `aam project list`).
+        names: Vec<String>,
+        #[arg(long = "all-scanned")]
+        all_scanned: bool,
     },
 }
 
