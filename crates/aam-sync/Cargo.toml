@@ -1,0 +1,8 @@
+[package]
+name = "aam-sync"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+aam-core = { path = "../aam-core" }

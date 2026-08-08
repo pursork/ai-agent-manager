@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/aam-core",
+    "crates/aam-vault",
+    "crates/aam-sync",
 ]
 
 [workspace.package]
