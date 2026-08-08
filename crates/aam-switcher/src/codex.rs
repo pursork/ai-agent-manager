@@ -226,6 +226,14 @@ mod tests {
 
     #[test]
     fn create_profile_registers_and_creates_directory() {
+        // `default_config_dir_for` is rooted at `aam_core::aam_home()`;
+        // holding this lock for AAM_HOME's whole lifetime here prevents
+        // racing with any other test in this crate that also points
+        // AAM_HOME at its own throwaway directory.
+        let _lock = crate::test_support::AAM_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let base = temp_dir("create-profile");
         std::env::set_var("AAM_HOME", &base);
         let registry = ProfileRegistry::open(base.join("profiles.json"));
