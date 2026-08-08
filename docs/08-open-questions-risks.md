@@ -10,6 +10,8 @@
 | 2 | Claude Code 侧"存活验证"该调用什么命令 | **确认存在官方命令**：`claude auth status`（默认 JSON，`--text` 可读格式），登录时退出码 0，未登录退出码 1。对应 GitHub Issue #1886（"Make status checkable from command line"）已于 **2.1.41 版本修复关闭**（`state_reason: completed`）。`03.5`/`03.6` 的存活验证步骤据此接入。 | [code.claude.com/docs/en/cli-reference](https://code.claude.com/docs/en/cli-reference)，[anthropics/claude-code#1886](https://github.com/anthropics/claude-code/issues/1886) |
 | 5 | Rust WebDAV 客户端 crate 选型（原 8.3 表格） | **确认不引入专门的 WebDAV crate**：GET/PUT/MKCOL/DELETE 都是普通 HTTP 方法 + Basic Auth，直接复用 Phase 1 已验证的 `ureq`（`ureq::request(method, url)` 支持任意方法）；PROPFIND 不需要，用 GET 404 判断"文件不存在"即可满足 push/pull。`04.8` 据此更新。 | Phase 2 实现时的技术选型（无需外部调研，`ureq` 是已在用的已验证依赖） |
 | 15 | 账号凭据本身（Claude/Codex 官方登录态，而非 Provider 配置）该如何同步（原 8.3 表格） | **确认只同步单个凭证文件**（Claude `.credentials.json`、Codex `auth.json`，均已在本机真实文件上核实），不同步整个配置目录。**发现真实的技术差异并据此定案**：Claude 的 `accessToken` 实测不是 JWT，没有可解析的身份声明，WebDAV key 用本地 Profile 的 label；Codex 的 `auth.json` JWT 带身份声明，key 用 codex-skill 已验证算法（`SHA256(user_id\|subject\|email\|account_id)` 截 20 位十六进制，直接读取真实源码移植）派生的指纹，不随 token 刷新变化。新增 `accounts.json.age` 索引解决"没有 PROPFIND 就发现不了 vault 里有哪些账号"的问题。`04.10` 据此新增，`aam sync push-account/list-accounts/pull-account` 已实现。 | 本机真实文件核实 + `C:\Users\16500\.codex\codex-interface-manager\src\account.ps1`/`common.ps1` 源码 |
+| 9 | `project-tracker`（现有单机技能）与 `aam-memory`（本模块）的具体桥接方式 | **确认选方案 (b) 的最简形式**：`aam-memory::ProjectIndex` 直接读写 `$HOME\.claude\project-index.json` 这个真实文件（本机核实 `track-session.ps1`/`backfill-index.ps1` 固定写这一个路径，不感知 `CLAUDE_CONFIG_DIR`），不改 hook 脚本、不复制一份。新字段全部 `serde(default)` 兼容旧记录。**连带发现一个真实 bug**：hook 脚本用 PowerShell `Out-File -Encoding utf8` 写文件，默认带 UTF-8 BOM（本机文件实测 `ef bb bf` 开头），`serde_json` 不会自动跳过，读取直接失败——`index.rs` 已加上剥离逻辑+回归测试。 | 本机真实 `project-index.json` 文件 + 实测运行 `aam project list` 复现的解析失败 |
+| 10 | `~/.codex/session_index.jsonl` 元数据缓存是否真实存在、格式是否稳定 | **确认本机不存在**（`$CODEX_HOME` 根目录实测没有这个文件）。`scan_codex_sessions` 据此直接扫 `sessions/**/rollout-*.jsonl` 作为主路径，不实现从未被验证需要过的"优先读快速索引"分支。**连带核实**真实 rollout 文件的 `session_meta` 头部行结构：`payload.cwd`/`payload.id`，**没有** `model_provider` 字段（`05.7` 原文猜测的字段不存在），也没有类似 `ai-title` 的自动摘要字段（印证 `05.8`"Codex autoStatus 默认留空"是对的）。 | 本机真实 `~/.codex/sessions/**/rollout-*.jsonl` 文件 |
 
 ## 8.2 Phase 1 内需要实测、但不阻塞开始编码的问题
 
@@ -26,13 +28,12 @@
 | 7 | `age`/`rage` crate 在 Windows 和 Linux 上的 passphrase 模式（scrypt 参数）是否完全一致，避免"设备 A 加密的东西设备 B 解不开"这种跨平台不一致问题 | `04.2` | Phase 2 开发时写一条跨平台集成测试（CI 里 Windows + Linux 两个 runner 互相加解密同一份测试数据） |
 | 16 | `aam sync reencrypt`/`push-account` 依赖本机 `ProviderRegistry`/`ProfileRegistry` 已知道的 id/label 才能覆盖——没有 PROPFIND，无法枚举"vault 上到底有哪些 blob"，如果某账号只在别的设备 push 过、本机从未 pull 过，本机跑 reencrypt 不会碰到它 | `04.9`/`04.10` | 非阻塞，`accounts.json.age`/未来的 provider 目录索引已经缓解"完全发现不了"的问题；真正的多设备联调放在 GUI 交付阶段做，届时验证这个限制的实际影响有多大 |
 
-## 8.4 阻塞 Phase 3 的问题
+## 8.4 阻塞 Phase 3 剩余部分（跨设备聚合 + WebDAV 同步）的问题
 
 | # | 问题 | 影响范围 | 应对方式 |
 |---|---|---|---|
-| 8 | "项目"的跨设备逻辑身份用什么做主键——物理路径在不同设备上大概率不同 | `05.2` | Phase 3 立项时定：候选方案是引入一个用户可选/可改的 `projectId`（首次记录时生成，允许用户手动关联"设备A的这个路径"和"设备B的那个路径"是同一个逻辑项目），而不是试图自动猜测 |
-| 9 | `project-tracker`（现有单机技能）与 `aam-memory`（本模块）的具体桥接方式 | `07` Phase 3 交付物提到但未定案 | Phase 3 立项时二选一：(a) 改造 `project-tracker` 的 hook 脚本直接写 `aam-memory` 认的 schema；(b) `aam-memory` 提供一个后台文件监视/定期读取 `project-index.json` 做双写。倾向 (a)，因为避免两套自动化并存 |
-| 10 | `~/.codex/session_index.jsonl` 元数据缓存是否真实存在、格式是否稳定 | `05.7` 想用它做"扫描 Codex 会话"的快速入口；来源是社区文章描述，非一等公民官方文档确认 | 不阻塞，Phase 3 实现时先探测该文件是否存在/可解析，不存在或解析失败就退化为直接扫描 `sessions/**/rollout-*.jsonl`（较慢但可靠） |
+| 8 | "项目"的跨设备逻辑身份用什么做主键——物理路径在不同设备上大概率不同 | `05.2`；Phase 3a（本地模型+发现/采集）不需要这个就能工作，`aam project list/show/resume` 目前都是单机视图 | Phase 3b（`aam session sync`/跨设备聚合视图）立项时定：候选方案是引入一个用户可选/可改的 `projectId`（首次记录时生成，允许用户手动关联"设备A的这个路径"和"设备B的那个路径"是同一个逻辑项目），而不是试图自动猜测 |
+| 17 | `aam session adopt --summarize`（`05.8`）需要调用一个 Provider 生成摘要，但 `Provider` trait 今天只有 `materialize`/`verify`/`api_key`，没有"给一段文本，返回补全"的通用能力 | `05.8`；Phase 3a 的 `aam session adopt` 里 `--summarize` 尚未实现（CLI 文档已注明） | Phase 3b 或更早的独立提交：给 `aam-switcher::Provider` 加一个 `complete(prompt) -> Result<String, _>` 之类的方法，Claude/CPA/DeepSeek 各自实现；不在 Phase 3a 里顺手加，因为这是一个会影响 `Provider` trait 公开签名的改动，值得单独过一遍设计 |
 
 ## 8.5 不阻塞任何 Phase，但需要长期关注的风险
 

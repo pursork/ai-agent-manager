@@ -1,5 +1,7 @@
 # 05. 会话 / 项目 Memory-Bank 模块（Phase 3）
 
+> **Phase 3a 实现状态**：`aam-memory` crate + `aam project list/show/resume`、`aam session scan/adopt/approve-sync` 已落地（本地模型 + 跨工具发现/采集），细节见 `08` #9/#10/#17。**`aam session sync`（真正推到 WebDAV）与跨设备聚合视图尚未实现**，是 Phase 3b 的范围；`5.6` 的 CLI 表已按实际实现更新。
+
 ## 5.1 起点：直接扩展今天已经在跑的 `project-tracker`
 
 `~/.claude/skills/project-tracker`（`~/.claude/project-index.json` + SessionStart/SessionEnd hook）已经解决了单机场景。本模块 = 把它的 schema 和自动记录机制原样保留作为**本地缓存层**，在其上加一层**跨设备同步层**。不重新发明本地部分。
@@ -81,18 +83,27 @@
 
 Memory-Bank 记录里的 `profileLabel` 字段，是"resume 提示"里附加的关键信息——沿用今天 `project-tracker` 已经做的"`authBackend` 不一致时警告"逻辑，跨设备场景下要警告的范围更大：**Profile（账号+Provider组合）不一致，且这个项目历史记录里用过 extended thinking 时，明确提示有 resume 失败风险**，而不只是"后端不一致"这一种情况。
 
-## 5.6 CLI 交付形态（Phase 3）
+## 5.6 CLI 交付形态
+
+**Phase 3a 已实现**（本地视图；`aam project list/show/resume` 目前只反映本机索引，跨设备聚合等 Phase 3b 的 `aam session sync` 落地后才有意义）：
 
 ```
-aam project list                       # 跨设备聚合视图（不止本机）
-aam project show <name>                # 某项目在各设备上的完整时间线
-aam project resume <name>              # 复用 project-tracker 逻辑，跨设备版
-aam project enable-full-sync <name>    # 显式开启高风险的完整目录同步
+aam project list                       # 本机所有已记录项目
+aam project show <name>                # 模糊匹配，打印匹配到的每条记录详情
+aam project resume <name>              # 打印 cd + resume 命令，绝不代跑；Profile 缺失/非官方后端会警告
 
-aam session scan                       # 本机发现：只读，不改索引（5.7）
-aam session adopt [--summarize --profile <label>]  # 采集入库：写本地索引，syncApproved=false（5.8）
-aam session approve-sync <name...>     # 显式批准回溯采集的条目参与同步（5.9）
-aam session sync                       # 手动触发一次 Memory-Bank 索引的 WebDAV 同步，只推 syncApproved=true 的条目
+aam session scan                       # 对已注册的每个 Profile 只读扫描，不改索引（5.7）
+aam session adopt                      # 采集入库：写本地索引，syncApproved=false（5.8）；
+                                        # --summarize 尚未实现，见 08 #17
+aam session approve-sync <path...>     # 显式批准回溯采集的条目参与同步（5.9）
+aam session approve-sync --all-scanned # 一次性批准所有 scan 来源、尚未批准的条目
+```
+
+**Phase 3b 待实现**：
+
+```
+aam project enable-full-sync <name>    # 显式开启高风险的完整目录同步（Phase 6，见 5.4）
+aam session sync                       # 把 Memory-Bank 索引推到 WebDAV，只推 syncApproved=true 的条目
 ```
 
 ## 5.7 本机会话发现（`aam session scan`）

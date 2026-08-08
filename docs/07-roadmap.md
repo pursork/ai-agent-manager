@@ -44,13 +44,19 @@
 
 ## Phase 3 — Session / Memory-Bank 追踪 + 同步
 
-对应文档：`05`。
+对应文档：`05`。分两个子阶段交付，同 Phase 2"先引擎、后接域对象、最后同步"的节奏。
 
-**交付物**：
-- `aam-memory`：本地索引（复用 `project-tracker` schema + 新增字段，含 `discoverySource`/`syncApproved`，见 `05.2`）+ 通过 `aam-sync` 同步的跨设备版本。
-- `aam-cli` 新增 `project list/show/resume/sync`。
-- 与 `~/.claude/skills/project-tracker` 的关系落地：要么 `project-tracker` 的 hook 直接写 `aam-memory` 能读的格式，要么提供一个一次性迁移/双写桥接（具体方式在本 Phase 立项时定，当前只确定"不能是用户手动维护两份"）。
-- **本机会话发现与显式批准同步的完整链路**（`05.7`-`05.9`）：`aam session scan`（跨 Claude/Codex、跨已注册 Profile 的只读扫描）、`aam session adopt [--summarize --profile <label>]`（写本地索引，`syncApproved=false`；**硬性约束：调用 Provider 做摘要必须显式指定 Profile，绝不静默挑选**）、`aam session approve-sync`（显式批准后才会被 `aam session sync` 推送——**硬性约束：扫描出的内容默认不出本机**）。
+### Phase 3a — 本地模型 + 发现/采集（已完成）
+
+- `aam-memory`：`ProjectRecord`/`ProjectIndex`，直接读写 `project-tracker` 已经在维护的真实 `project-index.json`（桥接方式定案见 `08` #9），新字段 `serde(default)` 兼容旧记录。
+- `aam-cli` 新增 `project list/show/resume`（本机视图）。
+- **本机会话发现与采集**（`05.7`-`05.9`）：`aam session scan`（跨 Claude/Codex、跨已注册 Profile 的只读扫描）、`aam session adopt`（写本地索引，`discoverySource=scan`/`syncApproved=false`——**硬性约束：扫描出的内容默认不出本机**）、`aam session approve-sync`。`--summarize` 尚未实现（需要 `Provider` trait 先加一个通用的"文本补全"能力，见 `08` #17），Codex 会话的 `autoStatus` 目前留空。
+
+### Phase 3b — 跨设备聚合 + WebDAV 同步（待立项）
+
+- `aam-memory` 索引通过 `aam-sync` 同步的跨设备版本；`aam-cli` 的 `project list/show/resume` 升级为真正的跨设备聚合视图。
+- `aam session sync`：只推 `syncApproved=true` 的条目。
+- 项目跨设备逻辑身份（`projectId`，见 `08` #8）、`Provider::complete()` 通用文本补全能力（`08` #17，`--summarize` 的前置依赖）在本子阶段立项时一并定案。
 - **`aam-skills` 的 Phase 3 子集**（`09.6`、`09.7`）：`aam skills scan`（跨 `~/.claude/skills`/`$HOME/.agents/skills`/各 Profile 的只读发现）、完整版 `aam skills adopt`（含从非规范位置移动内容）、来源追踪与 `check-updates`/`update`（GitHub 来源 skill 的手动更新检查，默认不自动应用）。
 
 **验收标准**：覆盖验收场景第 7-12 步中"记得住做到哪了"的部分——在设备 B 上执行 `aam project resume X`，能看到"上次在设备 A，Claude 官方账号2，一句话状态：...”，且给出正确的下一步操作提示（本地无该目录时的提示文案符合 `05.3`）；另外验证"扫描出的历史会话/skills 默认不出本机，需要显式批准/adopt 才会离开本机"这条本轮新增的核心约束。
