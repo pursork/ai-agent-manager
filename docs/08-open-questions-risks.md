@@ -9,6 +9,7 @@
 | 1 | `CODEX_HOME` 环境变量的精确语义 | **确认等价于整目录重定向**：`config.toml`、`auth.json`、`sessions/YYYY/MM/DD/rollout-*.jsonl`（`codex resume` 依赖的会话记录）、`history.jsonl`、`hooks.json`、日志/缓存、`profile-name.config.toml` 全部在 `CODEX_HOME` 根下（默认 `~/.codex`）。**例外：Skills 不受影响**，固定从 `$HOME/.agents/skills`（+ 仓库级/管理员级/内置）读取，天然全局共享，不随 Profile 分裂——见 `09`。据此 `aam-switcher` 的 Codex backend 采用和 Claude 相同的"N 目录 + 启动时选路径"模型，不再需要 codex-skill 原地写文件的回退分支（`03.2`、`07` Phase 1 已更新）。 | [developers.openai.com/codex/config-advanced](https://developers.openai.com/codex/config-advanced)，[developers.openai.com/codex/skills](https://developers.openai.com/codex/skills) |
 | 2 | Claude Code 侧"存活验证"该调用什么命令 | **确认存在官方命令**：`claude auth status`（默认 JSON，`--text` 可读格式），登录时退出码 0，未登录退出码 1。对应 GitHub Issue #1886（"Make status checkable from command line"）已于 **2.1.41 版本修复关闭**（`state_reason: completed`）。`03.5`/`03.6` 的存活验证步骤据此接入。 | [code.claude.com/docs/en/cli-reference](https://code.claude.com/docs/en/cli-reference)，[anthropics/claude-code#1886](https://github.com/anthropics/claude-code/issues/1886) |
 | 5 | Rust WebDAV 客户端 crate 选型（原 8.3 表格） | **确认不引入专门的 WebDAV crate**：GET/PUT/MKCOL/DELETE 都是普通 HTTP 方法 + Basic Auth，直接复用 Phase 1 已验证的 `ureq`（`ureq::request(method, url)` 支持任意方法）；PROPFIND 不需要，用 GET 404 判断"文件不存在"即可满足 push/pull。`04.8` 据此更新。 | Phase 2 实现时的技术选型（无需外部调研，`ureq` 是已在用的已验证依赖） |
+| 15 | 账号凭据本身（Claude/Codex 官方登录态，而非 Provider 配置）该如何同步（原 8.3 表格） | **确认只同步单个凭证文件**（Claude `.credentials.json`、Codex `auth.json`，均已在本机真实文件上核实），不同步整个配置目录。**发现真实的技术差异并据此定案**：Claude 的 `accessToken` 实测不是 JWT，没有可解析的身份声明，WebDAV key 用本地 Profile 的 label；Codex 的 `auth.json` JWT 带身份声明，key 用 codex-skill 已验证算法（`SHA256(user_id\|subject\|email\|account_id)` 截 20 位十六进制，直接读取真实源码移植）派生的指纹，不随 token 刷新变化。新增 `accounts.json.age` 索引解决"没有 PROPFIND 就发现不了 vault 里有哪些账号"的问题。`04.10` 据此新增，`aam sync push-account/list-accounts/pull-account` 已实现。 | 本机真实文件核实 + `C:\Users\16500\.codex\codex-interface-manager\src\account.ps1`/`common.ps1` 源码 |
 
 ## 8.2 Phase 1 内需要实测、但不阻塞开始编码的问题
 
@@ -23,7 +24,7 @@
 |---|---|---|---|
 | 6 | 用户自己的 WebDAV 服务器是否支持 `ETag`/`If-Match` 条件写入 | `04.6` 的冲突检测依赖服务器至少支持基本的条件请求，如果目标服务器不支持，需要退化到"先拉取比较 version 字段再写"的应用层方案（已经是当前设计的默认方案，不依赖服务器特性），这一条更多是"能不能锦上添花用服务器原生机制减少一次网络往返"的优化项，不是阻塞项 | 不阻塞，Phase 2 直接用应用层 version 比较，服务器特性作为后续优化 |
 | 7 | `age`/`rage` crate 在 Windows 和 Linux 上的 passphrase 模式（scrypt 参数）是否完全一致，避免"设备 A 加密的东西设备 B 解不开"这种跨平台不一致问题 | `04.2` | Phase 2 开发时写一条跨平台集成测试（CI 里 Windows + Linux 两个 runner 互相加解密同一份测试数据） |
-| 15 | 账号凭据本身（Claude/Codex 官方登录态：token/session 等，而非 Provider 配置）该如何纳入 `04.5` 的 `credentials/` blob——直接序列化整个 Profile 目录的体积/风险尚未评估 | `04.5`、`aam-sync::credential_sync` | Phase 2 第一批提交只做 Provider 配置（`ProviderRecord`，结构清晰、体积小）的 push/pull 打通端到端流程；账号凭据同步作为 Phase 2 后续提交单独设计，不阻塞先交付 Provider 配置同步 |
+| 16 | `aam sync reencrypt`/`push-account` 依赖本机 `ProviderRegistry`/`ProfileRegistry` 已知道的 id/label 才能覆盖——没有 PROPFIND，无法枚举"vault 上到底有哪些 blob"，如果某账号只在别的设备 push 过、本机从未 pull 过，本机跑 reencrypt 不会碰到它 | `04.9`/`04.10` | 非阻塞，`accounts.json.age`/未来的 provider 目录索引已经缓解"完全发现不了"的问题；真正的多设备联调放在 GUI 交付阶段做，届时验证这个限制的实际影响有多大 |
 
 ## 8.4 阻塞 Phase 3 的问题
 

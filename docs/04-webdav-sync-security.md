@@ -111,3 +111,44 @@
 | `aam sync push/pull --webdav-url <url> --webdav-user <user> --provider <id>` | 推送/拉取单个 Provider 的配置+密钥。`push` 会在推送前重新读取远端当前版本号（而不是信任本地缓存的版本号）作为 `push_if_not_stale` 的基准；`pull` 不需要主密码，只需要本机已有的设备私钥。 |
 
 所有命令都要求显式传入 `--webdav-url`/`--webdav-user`（`07` 已确认的设计：不做"记住上次 vault"的隐式状态）；WebDAV 密码与 vault 主密码均通过 `rpassword` 隐藏输入，不作为命令行参数传入（避免出现在 shell 历史/进程列表里）。
+
+## 4.10 账号凭证同步（Claude/Codex 官方登录态）
+
+对应 `08` #15（原先明确搁置的一块）。这是 `00-overview.md` 验收场景第 7 步"设备 B 未登录，通过云端加密共享凭据免登录使用官方订阅"的直接实现。
+
+**只同步凭证文件本身，不同步整个配置目录**：Claude 是 `$CLAUDE_CONFIG_DIR/.credentials.json`，Codex 是 `$CODEX_HOME/auth.json`（均已在真实本机文件上核实，不是假设）。不同步会话记录/cache/`history.jsonl` 等——那些要么体积大、变动频繁，要么是 `05`/`08` #11 已经明确排除的会话内容。
+
+**WebDAV key 因工具而异**（本机实测发现的真实技术差异，不是设计者随意选择）：
+
+- **Claude**：直接查看 `.credentials.json` 发现 `claudeAiOauth.accessToken` **不是 JWT**（没有两个 `.` 分隔符），不含可解析的身份声明——找不到"由凭证内容本身派生、代表真实账号身份"的稳定值。所以 Claude 的 key 就是本地 Profile 的 **label**。**已知限制**：两台设备必须给同一个 Claude 账号起同样的 label，才会被识别成同一账号参与同步；label 不同则视为两个独立账号，不自动去重。
+- **Codex**：`auth.json` 的 `tokens.id_token`/`tokens.access_token` 都是 JWT，带 `sub`/`email`/`https://api.openai.com/auth` 命名空间下的 `chatgpt_account_id`/`chatgpt_user_id` 等身份声明，可以派生一个不随 token 刷新变化的稳定指纹。指纹算法**照搬 codex-skill 已经在生产环境里用的算法**（直接读取真实源码 `account.ps1`/`common.ps1` 移植，非凭记忆重新发明）：
+
+  ```
+  identity = lower(user_id) + "|" + lower(subject) + "|" + lower(email) + "|" + account_id
+  fingerprint = SHA256_hex(identity)[0..20]
+  ```
+
+  `account_id` 本身不转小写；`user_id` 缺失时退化用 `subject`；`email`/`user_id` 都缺失则拒绝（无法安全区分账号）——这几条都是 codex-skill 原有的行为，Rust 版本原样保留。
+
+**目录布局**（`4.5` 早就写好骨架，这里落实 `<account-fingerprint>` 具体是什么）：
+
+```
+credentials/
+├── claude/<label>.blob.age        # key = Profile label
+└── codex/<fingerprint>.blob.age   # key = JWT 派生指纹
+accounts.json.age                   # 账号目录索引，主密码保护（同 devices.json 那一层）
+```
+
+`accounts.json.age`：因为没有 PROPFIND（`4.8`），`credentials/` 目录下实际有哪些账号 blob 光靠路径本身列不出来。每次 `push-account` 都会往这个索引里 upsert 一条 `{tool, key, label_hint, email_hint}`（`email_hint` 只有 Codex 才有，且只是提示，不作为身份判定依据），用主密码保护（复用 `encrypt_with_passphrase`/`decrypt_with_passphrase`，`aam-sync` 不需要为此新增能力）。`aam sync list-accounts` 解密它，让用户在 `pull-account` 前知道 vault 里有什么账号可拉。
+
+**拉取自动建 Profile**：`pull-account` 如果本地没有对应 tool 的目标 label，直接调用已有的 `claude_backend::create_profile`/`codex_backend::create_profile` 建一个，再把解密出的凭证文件原子写入其 `config_dir`——不这样做的话，用户还得先手动 `profile add` 才能用上拉下来的凭证。
+
+**CLI 命令**（同 `4.9` 的分层：`aam-sync` 提供通用的加解密/版本冲突原语，`aam-switcher::account_sync` 承接"这是一个账号凭证"的业务绑定）：
+
+| 命令 | 说明 |
+|---|---|
+| `aam sync push-account --webdav-url <url> --webdav-user <user> --tool <claude\|codex> --label <label>` | 推送某个本地 Profile 的登录凭证文件。 |
+| `aam sync list-accounts --webdav-url <url> --webdav-user <user>` | 列出 vault 里已有的账号（tool/key/label 提示/email 提示）。 |
+| `aam sync pull-account --webdav-url <url> --webdav-user <user> --tool <claude\|codex> --key <key> --as <local-label>` | 拉取指定账号凭证，本地无对应 Profile 时自动创建。 |
+
+**真实端到端联调**（真的从一台"设备"push、另一台 pull 后免登录可用）按既定安排留到 GUI 交付阶段统一做。
