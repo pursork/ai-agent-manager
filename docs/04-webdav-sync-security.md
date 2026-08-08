@@ -97,3 +97,17 @@
 - WebDAV 客户端：**不引入专门的 WebDAV crate**，复用 Phase 1 已经引入、已验证的 `ureq`（`aam-switcher::verify_http` 已经在用）——WebDAV 的 GET/PUT/MKCOL/DELETE 都是普通 HTTP 方法 + Basic Auth，`ureq::request(method, url)` 支持任意方法；PROPFIND（列目录）本轮不需要，用 GET 404 判断"文件不存在"即可满足 push/pull 的需求。减少一个新依赖的维护面（`08` 8.1 #5 已解决记录）。
 - `rpassword`：主密码的隐藏式终端输入（不回显），比 Provider API key 的明文 stdin 输入更进一步——主密码是"一把解开一切"的密钥，理应隐藏输入。
 - 测试策略：`aam-sync` 定义 `SyncBackend` trait，`WebDavBackend`（真实实现）之外另有 `LocalDirBackend`（同一套相对路径映射到本机目录），让 age 加解密往返、设备清单增删、版本冲突逻辑这些业务逻辑能在 CI 里被真正跑到，不需要连真实 WebDAV 服务器。
+
+## 4.9 CLI 命令（Phase 2 第一批实现）
+
+`aam-sync` 本身不知道"Provider"是什么（`02.1`：`aam-sync` 只依赖 `aam-core`，不能反过来依赖 `aam-switcher`），所以下面的 push/pull/reencrypt 命令里，"设备清单/加解密/冲突处理"部分调用 `aam-sync`，"这是一个 Provider 配置"这部分调用 `aam-switcher::provider_sync`（该模块因为 `aam-switcher` 本来就同时依赖 `aam-sync` 和 `aam-vault`，是承接这层业务绑定的正确位置）：
+
+| 命令 | 说明 |
+|---|---|
+| `aam sync init --webdav-url <url> --webdav-user <user> --label <label>` | 在一个全新的 WebDAV 位置创建 vault，本机成为第一个设备（`4.3` 的第一台设备特例）。 |
+| `aam device join --webdav-url <url> --webdav-user <user> --label <label>` | 加入一个已存在的 vault（`4.3` 步骤 1-5）。**不**自动完成步骤 6——加入后本机还不能解密已有 blob，需要已授权设备运行 `aam sync reencrypt`。 |
+| `aam device list` / `aam device revoke <device-id>` | 查看/吊销设备（`4.4`）。 |
+| `aam sync reencrypt --webdav-url <url> --webdav-user <user>` | `4.3` 步骤 6 的手动版：把本机已知的每个 Provider 配置用当前设备清单重新加密。已知限制：没有 PROPFIND 目录列举（`4.8`），只能覆盖本机本地已经注册过的 Provider id，见 `08` 待办事项。 |
+| `aam sync push/pull --webdav-url <url> --webdav-user <user> --provider <id>` | 推送/拉取单个 Provider 的配置+密钥。`push` 会在推送前重新读取远端当前版本号（而不是信任本地缓存的版本号）作为 `push_if_not_stale` 的基准；`pull` 不需要主密码，只需要本机已有的设备私钥。 |
+
+所有命令都要求显式传入 `--webdav-url`/`--webdav-user`（`07` 已确认的设计：不做"记住上次 vault"的隐式状态）；WebDAV 密码与 vault 主密码均通过 `rpassword` 隐藏输入，不作为命令行参数传入（避免出现在 shell 历史/进程列表里）。
