@@ -1,42 +1,51 @@
-//! Placeholder crate — Phase 1 (see `docs/03-credential-account-module.md`)
-//! will turn this into the Account/Provider switcher: the Claude
-//! (`CLAUDE_CONFIG_DIR` directory-selection) and Codex backends, the
-//! `Provider` trait for third-party endpoints (CPA, DeepSeek V4 Flash),
-//! and the standard snapshot → apply → verify → rollback switch sequence
-//! built on `aam_core::TransactionalOp`.
-//!
-//! Phase 0 only exists to prove out the workspace's crate graph and to give
-//! `aam-cli` a real (if empty) dependency to build against.
+// The DeepSeek model catalog's `serde_json::json!` literal (providers/deepseek.rs)
+// is deeply nested enough to exceed the default macro recursion limit.
+#![recursion_limit = "256"]
 
-/// Phase 0 placeholder confirming `aam-switcher` compiles as part of the
-/// workspace. Superseded once Phase 1 adds real switching logic.
-pub fn placeholder() -> &'static str {
-    "aam-switcher (Phase 0 placeholder, depends on aam-vault + aam-sync)"
+//! Account/Provider Switcher (`docs/03-credential-account-module.md`).
+//!
+//! Both Claude and Codex use the "N directories" model confirmed viable
+//! by `docs/08-open-questions-risks.md` §8.1: switching means launching a
+//! new process with `CLAUDE_CONFIG_DIR`/`CODEX_HOME` pointed at an
+//! already-materialized Profile directory, never rewriting a live shared
+//! config file in place.
+
+mod claude;
+mod codex;
+mod codex_toml;
+mod profile;
+mod provider;
+mod provider_registry;
+mod providers;
+mod token_helper;
+mod verify_http;
+
+pub use claude::ClaudeBackendError;
+pub use codex::{ApplyCodexProvider, CodexBackendError, CodexProviderBackup};
+pub use profile::{default_config_dir_for, Profile, ProfileRegistry, RegistryError, Tool};
+pub use provider::{Provider, ProviderConfig, ToolKind, VerifyError};
+pub use provider_registry::{ProviderKind, ProviderRecord, ProviderRegistry, ProviderRegistryError};
+pub use providers::{build_provider, catalog_file_name, CpaProvider, DeepSeekProvider};
+
+/// Entropy label + key-namespace for Provider API keys in `aam-vault`
+/// (distinct from `token_helper::TOKEN_ENTROPY`, which is per-Profile
+/// copies materialized into a Codex Profile's `CODEX_HOME` -- this is the
+/// one shared source of truth `aam profile use-provider` reads from).
+pub const PROVIDER_SECRET_ENTROPY: &str = "aam-provider-secrets-v1";
+
+pub fn provider_secret_store() -> std::io::Result<aam_vault::SecretStore> {
+    aam_vault::SecretStore::new(aam_core::aam_home().join("provider-secrets"), PROVIDER_SECRET_ENTROPY)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// The Claude backend's operations, grouped as functions rather than a
+/// struct -- there's no persistent backend state beyond the Profile
+/// registry, which callers already hold.
+pub mod claude_backend {
+    pub use crate::claude::{apply_provider, create_profile, launch_env, verify_login};
+}
 
-    #[test]
-    fn placeholder_mentions_crate_name() {
-        assert!(placeholder().contains("aam-switcher"));
-    }
-
-    /// Exercises the `aam-vault` and `aam-sync` dependency edges per
-    /// `docs/02-architecture.md` §2.1's dependency direction
-    /// (`aam-switcher` → `aam-vault` + `aam-sync`).
-    #[test]
-    fn depends_on_aam_vault_and_aam_sync() {
-        let dir = std::env::temp_dir().join(format!(
-            "aam-switcher-dep-check-{}",
-            std::process::id()
-        ));
-        let store = aam_vault::SecretStore::new(&dir, "aam-switcher-dep-check-v1").unwrap();
-        store.save("k", "v").unwrap();
-        assert_eq!(store.load("k").unwrap().as_deref(), Some("v"));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        assert!(aam_sync::placeholder().contains("aam-sync"));
-    }
+/// The Codex backend's operations (see [`claude_backend`] for why this is
+/// functions-in-a-module rather than a struct).
+pub mod codex_backend {
+    pub use crate::codex::{create_profile, launch_env, verify_login};
 }
