@@ -91,7 +91,9 @@
 - **不防护端点已被攻陷的设备**：如果攻击者已经拿到某台已授权设备的 age 私钥（本地态防护被突破），威胁模型上等同于拿到了合法接收方身份，这是本地态防护（`02`）的责任边界，不是本文档要解决的问题。
 - **不做团队协作**：整套机制假设"所有设备清单里的设备都是同一个人的"，没有"多用户、分权限"的概念。
 
-## 4.8 依赖的 Rust crate（供 Phase 2 立项时参考，非最终定案）
+## 4.8 依赖的 Rust crate（Phase 2 实际选型）
 
-- `age` 或 `rage`：passphrase 模式（层1）+ 多接收方 X25519 模式（层2）均由官方 crate 原生支持，无需自己实现密码学原语。
-- WebDAV 客户端：需要在 Phase 2 立项时调研当时活跃度最高的 Rust WebDAV crate（本轮未做 crate 级别的选型调研，记入 `08`）。
+- `age`：passphrase 模式（层1）+ 多接收方 X25519 模式（层2）均由官方 crate 原生支持，无需自己实现密码学原语。
+- WebDAV 客户端：**不引入专门的 WebDAV crate**，复用 Phase 1 已经引入、已验证的 `ureq`（`aam-switcher::verify_http` 已经在用）——WebDAV 的 GET/PUT/MKCOL/DELETE 都是普通 HTTP 方法 + Basic Auth，`ureq::request(method, url)` 支持任意方法；PROPFIND（列目录）本轮不需要，用 GET 404 判断"文件不存在"即可满足 push/pull 的需求。减少一个新依赖的维护面（`08` 8.1 #5 已解决记录）。
+- `rpassword`：主密码的隐藏式终端输入（不回显），比 Provider API key 的明文 stdin 输入更进一步——主密码是"一把解开一切"的密钥，理应隐藏输入。
+- 测试策略：`aam-sync` 定义 `SyncBackend` trait，`WebDavBackend`（真实实现）之外另有 `LocalDirBackend`（同一套相对路径映射到本机目录），让 age 加解密往返、设备清单增删、版本冲突逻辑这些业务逻辑能在 CI 里被真正跑到，不需要连真实 WebDAV 服务器。
