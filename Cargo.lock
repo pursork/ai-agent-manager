@@ -28,8 +28,12 @@ version = "0.1.0"
 name = "aam-memory"
 version = "0.1.0"
 dependencies = [
+ "aam-core",
  "aam-sync",
  "aam-vault",
+ "serde",
+ "serde_json",
+ "time",
 ]
 
 [[package]]

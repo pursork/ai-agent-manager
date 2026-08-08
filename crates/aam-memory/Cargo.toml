@@ -5,5 +5,9 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+aam-core = { path = "../aam-core" }
 aam-vault = { path = "../aam-vault" }
 aam-sync = { path = "../aam-sync" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+time = { version = "0.3.55", features = ["formatting"] }
