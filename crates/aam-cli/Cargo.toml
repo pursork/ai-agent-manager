@@ -9,5 +9,9 @@ name = "aam"
 path = "src/main.rs"
 
 [dependencies]
+aam-core = { path = "../aam-core" }
+aam-vault = { path = "../aam-vault" }
+aam-skills = { path = "../aam-skills" }
 aam-switcher = { path = "../aam-switcher" }
 aam-memory = { path = "../aam-memory" }
+clap = { version = "4", features = ["derive"] }

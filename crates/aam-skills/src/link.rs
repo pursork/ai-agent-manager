@@ -92,6 +92,11 @@ fn is_link_like(meta: &fs::Metadata) -> bool {
 }
 
 #[cfg(windows)]
+fn windows_backslash_path(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\")
+}
+
+#[cfg(windows)]
 fn create_dir_link(link_path: &Path, target_path: &Path) -> Result<(), LinkError> {
     // mklink /J requires the target to already exist.
     fs::create_dir_all(target_path)?;
@@ -99,10 +104,18 @@ fn create_dir_link(link_path: &Path, target_path: &Path) -> Result<(), LinkError
         fs::create_dir_all(parent)?;
     }
 
+    // cmd.exe's built-in `mklink` mis-tokenizes forward slashes in an
+    // unquoted path (it reads `/` as a switch prefix, e.g. `C:/Users/...`
+    // gets misread as drive `C:` followed by a bogus `/Users` switch,
+    // failing with "invalid drive"). PathBuf happily stores forward
+    // slashes verbatim (e.g. when built from an `AAM_HOME` env var that
+    // used them), so normalize to backslashes right before this
+    // cmd.exe-specific call rather than assuming callers never produce
+    // mixed-separator paths.
     let output = std::process::Command::new("cmd.exe")
         .args(["/d", "/s", "/c", "mklink", "/J"])
-        .arg(link_path)
-        .arg(target_path)
+        .arg(windows_backslash_path(link_path))
+        .arg(windows_backslash_path(target_path))
         .output()
         .map_err(|e| LinkError::Backend(format!("failed to spawn cmd.exe for mklink: {e}")))?;
 
@@ -242,6 +255,26 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn provisions_a_link_even_when_the_path_has_forward_slashes() {
+        // Regression test: an AAM_HOME (or other) env var set with
+        // forward slashes (e.g. from a POSIX-style shell) used to make
+        // cmd.exe's `mklink` fail with "invalid drive" because it
+        // misreads unquoted `/` as a switch prefix.
+        let base = TempDir::new("forward-slashes");
+        let target = base.0.join("canonical");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("marker.txt"), b"hi").unwrap();
+
+        let forward_slash_base = base.0.to_string_lossy().replace('\\', "/");
+        let link = PathBuf::from(format!("{forward_slash_base}/profile/skills"));
+
+        let mut op = ProvisionDirLink::new(&link, &target);
+        execute(&mut op).expect("provisioning should succeed even with forward slashes in the path");
+        assert!(link.join("marker.txt").is_file());
     }
 
     #[test]
