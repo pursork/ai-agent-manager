@@ -35,6 +35,29 @@ impl Tool {
             Tool::Codex => "CODEX_HOME",
         }
     }
+
+    /// This tool's config directory when *no* env var override is set:
+    /// `~/.claude` / `~/.codex` -- the tool's own hardcoded default,
+    /// distinct from any `aam`-managed Profile directory.
+    pub fn os_default_config_dir(self) -> PathBuf {
+        let dirname = match self {
+            Tool::Claude => ".claude",
+            Tool::Codex => ".codex",
+        };
+        aam_core::user_home_dir().join(dirname)
+    }
+
+    /// The config directory this tool is *actually* using in the current
+    /// process's environment right now: `config_dir_env_var()` if set,
+    /// else `os_default_config_dir()`. Used by `aam whoami` to figure out
+    /// which Profile (if any) a hook script's parent process was launched
+    /// under, since a Profile's `CLAUDE_CONFIG_DIR`/`CODEX_HOME` is
+    /// inherited down the process chain from `aam claude/codex <label>`.
+    pub fn actual_config_dir(self) -> PathBuf {
+        std::env::var_os(self.config_dir_env_var())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.os_default_config_dir())
+    }
 }
 
 impl fmt::Display for Tool {
@@ -166,6 +189,19 @@ impl ProfileRegistry {
             .into_iter()
             .filter(|p| p.tool == tool)
             .collect())
+    }
+
+    /// Finds the Profile whose `config_dir` matches `dir` (case-
+    /// insensitive, as Windows paths are) -- `aam whoami`'s core lookup,
+    /// turning "what `CLAUDE_CONFIG_DIR` is this process running under"
+    /// back into "which Profile label is that".
+    pub fn find_by_config_dir(&self, tool: Tool, dir: &std::path::Path) -> Result<Option<Profile>, RegistryError> {
+        let dir = dir.to_string_lossy().to_lowercase();
+        Ok(self
+            .load()?
+            .profiles
+            .into_iter()
+            .find(|p| p.tool == tool && p.config_dir.to_string_lossy().to_lowercase() == dir))
     }
 
     pub fn get(&self, tool: Tool, label: &str) -> Result<Option<Profile>, RegistryError> {
@@ -346,5 +382,44 @@ mod tests {
         assert_eq!(registry2.list().unwrap().len(), 1);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn find_by_config_dir_matches_case_insensitively() {
+        let (registry, dir) = temp_registry("find-by-config-dir");
+        registry
+            .add(Profile {
+                label: "work".into(),
+                tool: Tool::Claude,
+                config_dir: PathBuf::from("C:\\Users\\x\\Profiles\\Work"),
+                provider: None,
+            })
+            .unwrap();
+
+        let found = registry
+            .find_by_config_dir(Tool::Claude, std::path::Path::new("c:\\users\\x\\profiles\\work"))
+            .unwrap();
+        assert_eq!(found.map(|p| p.label), Some("work".to_string()));
+
+        assert!(registry
+            .find_by_config_dir(Tool::Claude, std::path::Path::new("C:\\nope"))
+            .unwrap()
+            .is_none());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// `actual_config_dir` reads process-wide env vars; a single test
+    /// covering both branches sequentially avoids needing a lock (no
+    /// other test in this crate touches `CLAUDE_CONFIG_DIR`/`CODEX_HOME`,
+    /// verified by grep before adding this).
+    #[test]
+    fn actual_config_dir_prefers_env_var_over_os_default() {
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+        assert_eq!(Tool::Claude.actual_config_dir(), Tool::Claude.os_default_config_dir());
+
+        std::env::set_var("CLAUDE_CONFIG_DIR", "C:\\custom\\claude-dir");
+        assert_eq!(Tool::Claude.actual_config_dir(), PathBuf::from("C:\\custom\\claude-dir"));
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
     }
 }

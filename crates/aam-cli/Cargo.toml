@@ -17,3 +17,4 @@ aam-memory = { path = "../aam-memory" }
 aam-sync = { path = "../aam-sync" }
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
+serde_json = "1.0.151"

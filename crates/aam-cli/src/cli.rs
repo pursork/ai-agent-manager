@@ -60,6 +60,20 @@ pub enum Command {
         #[command(subcommand)]
         action: SessionAction,
     },
+    /// Read-only diagnostic: prints which Profile (if any) and device this
+    /// process is running under, as JSON. Primarily for hook scripts (e.g.
+    /// the bundled `project-tracker` skill's `track-session.ps1`) to shell
+    /// out to, rather than re-implementing aam's DPAPI/registry lookups
+    /// themselves (`docs/09-skills-management.md`).
+    Whoami {
+        #[arg(long)]
+        tool: ToolArg,
+        /// Overrides the config directory to look up (mainly for testing);
+        /// defaults to $CLAUDE_CONFIG_DIR/$CODEX_HOME, or the tool's OS
+        /// default if that's unset.
+        #[arg(long)]
+        config_dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -141,6 +155,17 @@ pub enum SkillsAction {
         /// Comma-separated targets. Phase 1 supports `codex`.
         #[arg(long = "share-with")]
         share_with: String,
+    },
+    /// Installs a skill shipped with `aam` itself (e.g. `project-tracker`)
+    /// into `~/.claude/skills/<name>`. Refuses to overwrite an existing,
+    /// differently-content directory unless `--force` is given. Does
+    /// **not** register any Claude Code hooks -- see the installed skill's
+    /// own `SKILL.md` for that manual step.
+    InstallBundled {
+        /// Omit to install every bundled skill.
+        name: Option<String>,
+        #[arg(long)]
+        force: bool,
     },
 }
 

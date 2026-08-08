@@ -22,6 +22,7 @@ pub fn run(command: Command) -> Result<(), Box<dyn Error>> {
         Command::Sync { action } => run_sync(action),
         Command::Project { action } => run_project(action),
         Command::Session { action } => run_session(action),
+        Command::Whoami { tool, config_dir } => run_whoami(tool.into(), config_dir),
     }
 }
 
@@ -300,6 +301,32 @@ fn run_skills(action: SkillsAction) -> Result<(), Box<dyn Error>> {
                              'codex'; per-Profile Claude sharing lands in Phase 3)"
                         )
                         .into());
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        SkillsAction::InstallBundled { name, force } => {
+            let names: Vec<&str> = match &name {
+                Some(n) => vec![n.as_str()],
+                None => aam_skills::BUNDLED_SKILLS.iter().map(|s| s.name).collect(),
+            };
+            for n in names {
+                let outcome = aam_skills::install_bundled_skill(n, force)?;
+                match outcome {
+                    aam_skills::InstallOutcome::Installed => {
+                        println!(
+                            "installed '{n}' into {}",
+                            aam_skills::claude_personal_skills_dir().join(n).display()
+                        );
+                        println!("see its SKILL.md for the (manual) hook-registration step");
+                    }
+                    aam_skills::InstallOutcome::AlreadyUpToDate => {
+                        println!("'{n}' already up to date");
+                    }
+                    aam_skills::InstallOutcome::Overwritten => {
+                        println!("'{n}' overwritten with the bundled version");
                     }
                 }
             }
@@ -720,4 +747,21 @@ fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
     }
+}
+
+fn run_whoami(tool: Tool, config_dir: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
+    let dir = config_dir.unwrap_or_else(|| tool.actual_config_dir());
+    let profile_label = profile_registry().find_by_config_dir(tool, &dir)?.map(|p| p.label);
+    let device_id = aam_sync::local_identity(&aam_core::aam_home().join("sync"))
+        .ok()
+        .flatten()
+        .map(|i| i.device_id);
+
+    let output = serde_json::json!({
+        "toolKind": tool.as_str(),
+        "profileLabel": profile_label,
+        "deviceId": device_id,
+    });
+    println!("{output}");
+    Ok(())
 }

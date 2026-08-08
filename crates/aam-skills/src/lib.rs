@@ -10,13 +10,15 @@
 //! Deliberately has **no** dependency on `aam-sync` — Skills sync over
 //! plain git, not the encrypted WebDAV channel (`09.2`).
 
+mod bundled;
 mod link;
 mod manage;
 mod paths;
 
+pub use bundled::{find_bundled_skill, BundledSkill, BUNDLED_SKILLS};
 pub use link::{resolves_to, LinkError, ProvisionDirLink};
 pub use manage::{
-    list_managed_skills, provision_profile_skills_link, share_skill_with_codex, ManagedSkill,
-    ShareError,
+    install_bundled_skill, install_bundled_skill_at, list_managed_skills, provision_profile_skills_link,
+    share_skill_with_codex, InstallError, InstallOutcome, ManagedSkill, ShareError,
 };
 pub use paths::{claude_personal_skills_dir, codex_user_skills_dir};

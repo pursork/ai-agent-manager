@@ -40,6 +40,111 @@ impl From<io::Error> for ShareError {
     }
 }
 
+#[derive(Debug)]
+pub enum InstallError {
+    UnknownBundledSkill(String),
+    /// The target directory already exists with content that doesn't
+    /// match the bundled version -- refuses to silently clobber whatever
+    /// the user has there (could be their own edits, or an older/newer
+    /// hand-installed copy). Pass `force: true` to overwrite anyway.
+    ConflictsWithExisting { name: String, path: PathBuf },
+    Io(io::Error),
+}
+
+impl fmt::Display for InstallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstallError::UnknownBundledSkill(name) => {
+                write!(f, "no bundled skill named '{name}'")
+            }
+            InstallError::ConflictsWithExisting { name, path } => write!(
+                f,
+                "'{name}' already exists at {} with different content -- pass --force to overwrite",
+                path.display()
+            ),
+            InstallError::Io(e) => write!(f, "I/O error: {e}"),
+        }
+    }
+}
+
+impl Error for InstallError {}
+
+impl From<io::Error> for InstallError {
+    fn from(e: io::Error) -> Self {
+        InstallError::Io(e)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallOutcome {
+    /// The skill directory didn't exist yet; all files were written.
+    Installed,
+    /// The skill directory already existed with byte-identical content --
+    /// nothing was written.
+    AlreadyUpToDate,
+    /// The skill directory existed with different content and `force` was
+    /// set -- all files were overwritten.
+    Overwritten,
+}
+
+/// Materializes a bundled skill (`bundled.rs`) into the canonical
+/// `~/.claude/skills/<name>` -- `aam skills install-bundled`. Deliberately
+/// does **not** touch `~/.claude/settings.json`'s hook registration
+/// (`docs/09-skills-management.md`'s "aam never rewrites a tool's live
+/// config without being explicitly asked" boundary); the bundled
+/// `SKILL.md` documents that manual step itself.
+pub fn install_bundled_skill(name: &str, force: bool) -> Result<InstallOutcome, InstallError> {
+    install_bundled_skill_at(&claude_personal_skills_dir(), name, force)
+}
+
+/// [`install_bundled_skill`], parameterized on the skills root -- lets
+/// tests target a throwaway directory instead of the real
+/// `~/.claude/skills` (`claude_personal_skills_dir()` has no env-var
+/// override the way `aam_core::aam_home()` does, so this is the only way
+/// to test the write logic without touching a real, possibly-live
+/// installation).
+pub fn install_bundled_skill_at(
+    root: &std::path::Path,
+    name: &str,
+    force: bool,
+) -> Result<InstallOutcome, InstallError> {
+    let skill = crate::bundled::find_bundled_skill(name)
+        .ok_or_else(|| InstallError::UnknownBundledSkill(name.to_string()))?;
+    let dir = root.join(skill.name);
+
+    let already_existed = dir.is_dir();
+    if already_existed {
+        let identical = skill.files.iter().all(|(rel_path, content)| {
+            fs::read_to_string(dir.join(rel_path))
+                .map(|current| current == *content)
+                .unwrap_or(false)
+        });
+        if identical {
+            return Ok(InstallOutcome::AlreadyUpToDate);
+        }
+        if !force {
+            return Err(InstallError::ConflictsWithExisting {
+                name: skill.name.to_string(),
+                path: dir,
+            });
+        }
+    }
+
+    for (rel_path, content) in skill.files {
+        let target = dir.join(rel_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        aam_core::atomic_write(&target, content.as_bytes())?;
+    }
+
+    Ok(if already_existed {
+        InstallOutcome::Overwritten
+    } else {
+        InstallOutcome::Installed
+    })
+}
+
 /// Provisions `<profile_dir>/skills` to resolve to the canonical
 /// `~/.claude/skills` store, so a Claude Profile never has its own
 /// diverging copy (`docs/03-credential-account-module.md` §3.7).
@@ -183,5 +288,70 @@ mod tests {
         assert!(extra.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aam-skills-install-bundled-test-{label}-{}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn installs_a_bundled_skill_into_a_fresh_directory() {
+        let root = temp_root("fresh");
+        let outcome = install_bundled_skill_at(&root, "project-tracker", false).unwrap();
+        assert_eq!(outcome, InstallOutcome::Installed);
+        assert!(root.join("project-tracker/SKILL.md").is_file());
+        assert!(root.join("project-tracker/scripts/track-session.ps1").is_file());
+        assert!(root.join("project-tracker/scripts/backfill-index.ps1").is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reinstalling_identical_content_is_a_no_op() {
+        let root = temp_root("idempotent");
+        install_bundled_skill_at(&root, "project-tracker", false).unwrap();
+        let outcome = install_bundled_skill_at(&root, "project-tracker", false).unwrap();
+        assert_eq!(outcome, InstallOutcome::AlreadyUpToDate);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conflicting_existing_content_is_rejected_without_force() {
+        let root = temp_root("conflict");
+        install_bundled_skill_at(&root, "project-tracker", false).unwrap();
+        fs::write(root.join("project-tracker/SKILL.md"), "user's own edits").unwrap();
+
+        let err = install_bundled_skill_at(&root, "project-tracker", false).unwrap_err();
+        assert!(matches!(err, InstallError::ConflictsWithExisting { .. }));
+        // Must not have touched the user's edit.
+        assert_eq!(
+            fs::read_to_string(root.join("project-tracker/SKILL.md")).unwrap(),
+            "user's own edits"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_overwrites_conflicting_content() {
+        let root = temp_root("force");
+        install_bundled_skill_at(&root, "project-tracker", false).unwrap();
+        fs::write(root.join("project-tracker/SKILL.md"), "user's own edits").unwrap();
+
+        let outcome = install_bundled_skill_at(&root, "project-tracker", true).unwrap();
+        assert_eq!(outcome, InstallOutcome::Overwritten);
+        assert_ne!(
+            fs::read_to_string(root.join("project-tracker/SKILL.md")).unwrap(),
+            "user's own edits"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unknown_bundled_skill_name_errors() {
+        let root = temp_root("unknown");
+        let err = install_bundled_skill_at(&root, "does-not-exist", false).unwrap_err();
+        assert!(matches!(err, InstallError::UnknownBundledSkill(n) if n == "does-not-exist"));
     }
 }
