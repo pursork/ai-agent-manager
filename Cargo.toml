@@ -4,6 +4,8 @@ members = [
     "crates/aam-core",
     "crates/aam-vault",
     "crates/aam-sync",
+    "crates/aam-switcher",
+    "crates/aam-memory",
 ]
 
 [workspace.package]

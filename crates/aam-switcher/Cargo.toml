@@ -1,0 +1,9 @@
+[package]
+name = "aam-switcher"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+aam-vault = { path = "../aam-vault" }
+aam-sync = { path = "../aam-sync" }
