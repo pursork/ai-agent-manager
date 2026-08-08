@@ -26,7 +26,12 @@ mod tests {
     /// (`aam-memory` → `aam-vault` + `aam-sync`).
     #[test]
     fn depends_on_aam_vault_and_aam_sync() {
-        assert!(aam_vault::placeholder().contains("aam-vault"));
+        let dir = std::env::temp_dir().join(format!("aam-memory-dep-check-{}", std::process::id()));
+        let store = aam_vault::SecretStore::new(&dir, "aam-memory-dep-check-v1").unwrap();
+        store.save("k", "v").unwrap();
+        assert_eq!(store.load("k").unwrap().as_deref(), Some("v"));
+        let _ = std::fs::remove_dir_all(&dir);
+
         assert!(aam_sync::placeholder().contains("aam-sync"));
     }
 }
