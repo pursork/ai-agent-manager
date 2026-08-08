@@ -10,8 +10,10 @@
 //! already-materialized Profile directory, never rewriting a live shared
 //! config file in place.
 
+mod account_sync;
 mod claude;
 mod codex;
+mod codex_fingerprint;
 mod codex_toml;
 mod profile;
 mod provider;
@@ -21,6 +23,10 @@ mod providers;
 mod token_helper;
 mod verify_http;
 
+pub use account_sync::{
+    credential_file_name as account_credential_file_name, list_accounts, pull_account, push_account,
+    AccountCatalogEntry, AccountSyncError,
+};
 pub use claude::ClaudeBackendError;
 pub use codex::{ApplyCodexProvider, CodexBackendError, CodexProviderBackup};
 pub use profile::{default_config_dir_for, Profile, ProfileRegistry, RegistryError, Tool};

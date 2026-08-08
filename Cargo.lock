@@ -49,6 +49,7 @@ dependencies = [
  "aam-vault",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "ureq",
 ]
 
