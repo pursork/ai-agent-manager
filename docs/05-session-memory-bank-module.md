@@ -28,9 +28,14 @@
   "toolKind": "claude | codex",
   "profileLabel": "写入时使用的 Profile（见 03），如 官方账号2 / DeepSeek",
   "fullSyncEnabled": false,
-  "fullSyncStatus": null
+  "fullSyncStatus": null,
+  "discoverySource": "live | scan",
+  "syncApproved": true
 }
 ```
+
+- `discoverySource`：`live` = 正常使用中经由 hook 实时记录（今天 `project-tracker` 的现有行为）；`scan` = 通过 `aam session scan`/`adopt` 回溯采集出来的历史会话（见 5.7-5.9）。
+- `syncApproved`：这条记录是否允许被 `aam session sync` 推送到 WebDAV。`live` 记录默认 `true`（沿用 G3 既定的"进度元信息默认同步"目标）；`scan` 来源的记录默认 **`false`**，必须用户显式 `aam session approve-sync` 才会变成 `true`。这是本轮新增的硬性原则：**"被发现"和"被同步"是两回事**，回溯采集不应该在用户没意识到的情况下把一堆历史项目路径/时间戳推到云端。
 
 - `deviceId` + `toolKind`：跨设备/跨工具场景下，"同一个项目路径 `X`"在设备 A 用 Claude 做过、在设备 B 用 Codex 做过，这两条记录**不合并成一条**，而是分别记录，但在 UI 上按项目"聚合展示"（同一个逻辑项目下面挂多条设备/工具/时间线记录）。项目的"逻辑身份"用什么做主键，是本模块需要在 Phase 3 立项时进一步定义的问题（候选：项目名 + 一个用户可选的稳定项目 ID，而不是物理路径，因为同一项目在不同设备上的绝对路径大概率不同）——记入 `08`。
 - `fullSyncEnabled` / `fullSyncStatus`：见 5.4。
@@ -83,5 +88,39 @@ aam project list                       # 跨设备聚合视图（不止本机）
 aam project show <name>                # 某项目在各设备上的完整时间线
 aam project resume <name>              # 复用 project-tracker 逻辑，跨设备版
 aam project enable-full-sync <name>    # 显式开启高风险的完整目录同步
-aam project sync                       # 手动触发一次 Memory-Bank 索引的 WebDAV 同步
+
+aam session scan                       # 本机发现：只读，不改索引（5.7）
+aam session adopt [--summarize --profile <label>]  # 采集入库：写本地索引，syncApproved=false（5.8）
+aam session approve-sync <name...>     # 显式批准回溯采集的条目参与同步（5.9）
+aam session sync                       # 手动触发一次 Memory-Bank 索引的 WebDAV 同步，只推 syncApproved=true 的条目
 ```
+
+## 5.7 本机会话发现（`aam session scan`）
+
+泛化今天 `project-tracker` 的 `backfill-index.ps1`（目前只扫 Claude 一个工具、一个固定的 `~/.claude`）成跨工具、跨已注册 Profile 的通用扫描：
+
+- **扫描范围**：对 `aam profile list`（`03`）里注册的**每一个** Profile，分别去它对应的 `CLAUDE_CONFIG_DIR`/`CODEX_HOME` 下找会话记录——Claude 是 `<profile-dir>/projects/*/*.jsonl`（提取 `cwd` + 最新 `ai-title`，沿用 `backfill-index.ps1` 现有逻辑），Codex 是 `<profile-dir>/sessions/YYYY/MM/DD/rollout-*.jsonl`（提取 metadata 头部行的 `cwd`/时间戳/`model_provider`；如果 `<profile-dir>/session_index.jsonl` 存在就优先读它做快速索引，不存在则退化为直接扫 `sessions/**`，见 `08`）。
+- **去重**：跳过本地索引里已经存在（不论 `discoverySource` 是 `live` 还是 `scan`）的 `(path, lastSessionId)` 组合。
+- **只读**：`scan` 本身不写入 `project-index.json`，只打印/返回一份"发现了 N 条未纳管会话"的清单供用户过目，真正入库是下一步 `adopt`。这个"先看后动"的两段式设计和 `09` 里 Skills 的 `scan`/`adopt` 完全对称，是本轮统一确立的 UX 模式。
+
+## 5.8 采集入库（`aam session adopt`）
+
+把 `scan` 找到的会话（全部，或用户指定的子集）写入本地 `project-index.json`：
+
+- 自动填充：`path`、`lastSessionId`、`lastActive`（取文件 mtime）、`deviceId`、`toolKind`、`profileLabel`（来自扫描时的 Profile 归属）、`discoverySource: "scan"`、`syncApproved: false`。
+- `autoStatus`：
+  - Claude 会话：能从 `ai-title` 记录里提取到，直接复用（今天 `project-tracker` backfill 已经这么做）。
+  - Codex 会话：rollout 文件里没有等价的自动摘要字段（`08`）。**默认留空**（`autoStatus: null`，提示用户像 `statusOverride` 一样手动填一句话）。
+  - 加 `--summarize` 时，改为调用一个 Profile 生成摘要并写入 `autoStatus`——**硬性要求：必须用 `--profile <label>` 显式指定用哪个 Profile 做摘要，或读取用户预先 `aam profile set-default` 设置的默认 Profile；两者都没有就报错退出，绝不静默挑选一个 Profile**。原因：摘要意味着把会话内容发给该 Profile 背后的后端，如果这个后端恰好是第三方 API，用户必须是"知情且主动选择"的，不能被动"不小心"把内容发出去。
+- **这一步全程本机操作，不触碰网络/WebDAV**（除非 `--summarize` 选用的 Profile 恰好是需要联网调用的后端——但那是"调用 AI 生成摘要"这个动作本身要联网，跟"是否同步到 WebDAV"是两件独立的事，`adopt` 完成后 `syncApproved` 依然是 `false`）。
+
+## 5.9 显式批准再同步（`aam session approve-sync`）
+
+`aam session sync` 推送索引到 WebDAV 时，只推 `syncApproved: true` 的条目。`scan`/`adopt` 产生的条目默认 `false`，需要用户额外跑：
+
+```
+aam session approve-sync <name...>     # 按名字批准一批
+aam session approve-sync --all-scanned # 一次性批准所有 scan 来源、目前还没批准的条目（明确知道自己在做什么才用）
+```
+
+批准后该条目的 `syncApproved` 改为 `true`，下次 `aam session sync` 才会把它带上云端。`live` 来源的条目不受这一步影响（一直是 `true`，这是既有 G3 目标的正常行为，不因为本轮新增设计而收紧）。

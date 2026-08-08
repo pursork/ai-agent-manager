@@ -80,3 +80,15 @@ aam profile verify <profile-label>     # 单独触发一次存活验证，不切
 ```
 
 这组命令行为上是 Codex 侧 `codex-skill` 和 Claude 侧尚不存在的等价物的统一入口，是后续 GUI（Phase 4，`06`）"新建终端标签页时选 Profile"这个交互的直接后端。
+
+## 3.7 Claude Profile 的 Skills 一致性
+
+`3.2` 确认 Claude 侧账号切换用"N 目录 + 启动时选 `CLAUDE_CONFIG_DIR`"模型——这意味着每个 Profile 有自己独立的 `<profile-dir>/skills/`。这带来一个新问题：**用户精心积累的 Skills，会不会因为切换 Profile 就"看不见"了？**
+
+- **官方文档没有回答这个问题**：`CLAUDE_CONFIG_DIR` 本身就不在官方文档里（社区验证的行为），更谈不上它是否连带重定向 `skills/` 子路径。这一点记入 `08`，Phase 1 要实测。
+- **不管实测结果如何，设计上都统一处理**：每个 Claude Profile 目录创建时，`aam-switcher` 调用 `aam-skills`（`09`）提供的能力，把 `<profile-dir>/skills` 做成指向本机规范 Skills 仓库（`~/.claude/skills`）的符号链接（Unix）或 Junction（Windows）。
+  - 如果实测发现 `CLAUDE_CONFIG_DIR` **不**重定向 skills（即 Claude 无论哪个 Profile 启动都固定读 `~/.claude/skills`）——这一步是无害的空操作，`<profile-dir>/skills` 本来就用不上。
+  - 如果实测发现 `CLAUDE_CONFIG_DIR` **确实**重定向 skills——这一步避免了"每个 Profile 各自维护一份 skills 副本，改一个不改另一个，越用越漂移"的问题：所有 Profile 通过链接共享同一份物理内容。
+- **Codex 侧不需要这一步**：`08` 已确认 Codex 的 Skills 固定从 `$HOME/.agents/skills` 读取，完全不受 `CODEX_HOME` 影响，天然是全局共享的，不会因为切换 Codex Profile 而分裂。
+- **这个符号链接/Junction 操作本身也遵循 `02.6` 的 TransactionalOp 原则**：创建/替换前检查目标路径当前状态（可能是空目录、真实目录、已经是链接），失败要能回滚到"链接创建前"的状态，不留半成品。
+- **Claude↔Codex 跨工具共享**（同一个 skill 同时被两个工具用）是同一套符号链接/Junction 机制的另一个应用，但那是显式命令触发（`aam skills adopt --share-with codex`），不是 Profile 创建时自动做的——因为不是所有 skill 都适合分享给另一个工具（可能用了 Claude 专属 frontmatter）。完整设计见 `09-skills-management.md`。

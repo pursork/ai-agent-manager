@@ -10,12 +10,13 @@ ai-agent-manager/
 │   ├── aam-switcher/     # Account/Provider Switcher：Claude + Codex 两个 backend
 │   ├── aam-sync/         # WebDAV Sync Engine：加密 blob 的推拉、设备清单、冲突处理
 │   ├── aam-memory/       # Session/Project Memory-Bank：本地索引 + 同步
+│   ├── aam-skills/       # Skills 跨工具共享 + 发现/纳管（明文/git，不经 aam-sync）
 │   ├── aam-cli/          # CLI 入口（Phase 1 交付形态，最先做）
 │   └── aam-gui/          # iced GUI 外壳（Phase 4+，依赖以上全部作为库）
 └── docs/                 # 本目录
 ```
 
-依赖方向：`aam-gui` → `aam-cli` 的逻辑层（或共享一个 `aam-app` 门面 crate）→ `aam-switcher` + `aam-memory` → `aam-vault` + `aam-sync` → `aam-core`。GUI 不直接碰文件系统/网络，一律通过下层 crate 的公开 API，保证"先做 CLI 能力，GUI 只是壳"这条 Roadmap 主线在代码结构上也成立。
+依赖方向：`aam-gui` → `aam-cli` 的逻辑层（或共享一个 `aam-app` 门面 crate）→ `aam-switcher` + `aam-memory` + `aam-skills` → `aam-vault` + `aam-sync` → `aam-core`。`aam-skills` 是个例外分支：它**不经过** `aam-vault`/`aam-sync`，直接依赖 `aam-core`——因为 `09` 里已经定案 Skills 走明文/git 而不是加密 WebDAV 通道，没有理由绑定同步引擎。GUI 不直接碰文件系统/网络，一律通过下层 crate 的公开 API，保证"先做 CLI 能力，GUI 只是壳"这条 Roadmap 主线在代码结构上也成立。
 
 ## 2.2 五大模块职责
 
@@ -24,7 +25,8 @@ ai-agent-manager/
 | **Credential Vault** | 本地加密存储各账号凭据（Claude 的 `CLAUDE_CONFIG_DIR` 整目录 / Codex 的 `auth.json`），管理设备本地身份（age 密钥对），提供主密码解锁/加锁 API | `03`（存什么）+ `04`（怎么加密） |
 | **Account/Provider Switcher** | 执行"切换到某账号/某 Provider"这个动作本身：快照→原子写→存活验证→失败回滚。对 Claude 和 Codex 各有一个 backend 实现，第三方 Provider 通过统一 trait 接入 | `03` |
 | **WebDAV Sync Engine** | 把 Vault 里的加密 blob、Memory-Bank 的加密索引，推送/拉取到用户自己的 WebDAV；管理"设备清单"这个特殊的、决定谁能解密的控制文件 | `04` |
-| **Session/Project Memory-Bank Tracker** | 维护 `project-index.json`（本地态，直接沿用 `project-tracker` 的 schema）+ 通过 Sync Engine 同步的跨设备版本；负责"这个项目上次在哪台设备哪个路径"的问答 | `05` |
+| **Session/Project Memory-Bank Tracker** | 维护 `project-index.json`（本地态，直接沿用 `project-tracker` 的 schema）+ 通过 Sync Engine 同步的跨设备版本；负责"这个项目上次在哪台设备哪个路径"的问答；负责本机会话的扫描发现与"显式批准才同步"的把关 | `05` |
+| **Skills Manager** | 维护一份规范 Skills 仓库，通过符号链接/Junction 让 Claude 的多个 Profile 和 Codex 同时看到同一份 skills；负责本机 skills 的扫描发现、纳管、GitHub 来源的更新检查；不经过 WebDAV 加密通道，走明文/git | `09` |
 | **GUI Shell** | iced 应用，多标签终端（`iced_term`）+ 侧边栏会话/账号选择器，调用以上模块的 API，不重复实现业务逻辑 | `06` |
 
 ## 2.3 数据流（一次典型的"切换账号并继续项目"操作）
@@ -85,7 +87,7 @@ ai-agent-manager/
 
 ## 2.6 跨模块的一致操作哲学
 
-不论是账号切换（`03`）、凭据同步（`04`）、还是项目索引更新（`05`），全部遵循同一条从 `codex-skill` 继承来的原则：
+不论是账号切换（`03`）、凭据同步（`04`）、项目索引更新（`05`），还是 Skills 符号链接/Junction 供给（`09`），全部遵循同一条从 `codex-skill` 继承来的原则：
 
 > **任何会修改本地持久状态的操作，必须是"快照 → 原子写 → 校验 → 失败自动回滚"，不允许中间态可见，不允许静默失败。**
 

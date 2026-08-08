@@ -18,10 +18,12 @@
 对应文档：`03`。
 
 **交付物**：
-- `aam-switcher` 完成 Claude backend（`CLAUDE_CONFIG_DIR` 目录选择模式）+ Codex backend（先移植 `codex-skill` 现有的原地写文件模式，`CODEX_HOME` 语义确认后再评估是否切到目录选择模式）。
+- `aam-switcher` 完成 Claude backend 和 Codex backend，**两者统一用"N 目录 + 启动时选 `CLAUDE_CONFIG_DIR`/`CODEX_HOME`"模型**（`CODEX_HOME` 语义已确认等价于整目录重定向，见 `08`，不再需要 codex-skill 原地写文件的回退分支）。
 - Provider trait 落地两个具体实现：CPA、DeepSeek V4 Flash。
 - `aam-cli` 的 `profile list/add/verify` + `aam claude`/`aam codex` 启动包装命令。
-- Claude 侧存活验证命令确认并接入（阻塞项，见 `08`）。
+- Claude 侧存活验证命令 `claude auth status` 接入（`08` 已确认为官方命令，不再阻塞）。
+- **Claude Profile 创建时的 Skills Junction/符号链接供给**（`03.7`、`09.3`）——结构性、无外部依赖，随账号切换一起交付。
+- `aam-skills` crate 的 Phase 1 子集：`aam skills list/status` + 显式跨工具共享 `aam skills adopt <name> --share-with <targets>`（仅限已在规范位置的 skill，完整的"从任意位置纳管"流程留到 Phase 3，见 `09.8`）。
 
 **验收标准**：覆盖验收场景第 1-6 步（设备 A 上，Claude 两个官方账号 + 第三方 API + Codex 两个官方账号 + 第三方 API，全部能通过 `aam` 命令一键切换并通过存活验证）。
 
@@ -45,11 +47,13 @@
 对应文档：`05`。
 
 **交付物**：
-- `aam-memory`：本地索引（复用 `project-tracker` schema + 新增字段）+ 通过 `aam-sync` 同步的跨设备版本。
+- `aam-memory`：本地索引（复用 `project-tracker` schema + 新增字段，含 `discoverySource`/`syncApproved`，见 `05.2`）+ 通过 `aam-sync` 同步的跨设备版本。
 - `aam-cli` 新增 `project list/show/resume/sync`。
 - 与 `~/.claude/skills/project-tracker` 的关系落地：要么 `project-tracker` 的 hook 直接写 `aam-memory` 能读的格式，要么提供一个一次性迁移/双写桥接（具体方式在本 Phase 立项时定，当前只确定"不能是用户手动维护两份"）。
+- **本机会话发现与显式批准同步的完整链路**（`05.7`-`05.9`）：`aam session scan`（跨 Claude/Codex、跨已注册 Profile 的只读扫描）、`aam session adopt [--summarize --profile <label>]`（写本地索引，`syncApproved=false`；**硬性约束：调用 Provider 做摘要必须显式指定 Profile，绝不静默挑选**）、`aam session approve-sync`（显式批准后才会被 `aam session sync` 推送——**硬性约束：扫描出的内容默认不出本机**）。
+- **`aam-skills` 的 Phase 3 子集**（`09.6`、`09.7`）：`aam skills scan`（跨 `~/.claude/skills`/`$HOME/.agents/skills`/各 Profile 的只读发现）、完整版 `aam skills adopt`（含从非规范位置移动内容）、来源追踪与 `check-updates`/`update`（GitHub 来源 skill 的手动更新检查，默认不自动应用）。
 
-**验收标准**：覆盖验收场景第 7-12 步中"记得住做到哪了"的部分——在设备 B 上执行 `aam project resume X`，能看到"上次在设备 A，Claude 官方账号2，一句话状态：...”，且给出正确的下一步操作提示（本地无该目录时的提示文案符合 `05.3`）。
+**验收标准**：覆盖验收场景第 7-12 步中"记得住做到哪了"的部分——在设备 B 上执行 `aam project resume X`，能看到"上次在设备 A，Claude 官方账号2，一句话状态：...”，且给出正确的下一步操作提示（本地无该目录时的提示文案符合 `05.3`）；另外验证"扫描出的历史会话/skills 默认不出本机，需要显式批准/adopt 才会离开本机"这条本轮新增的核心约束。
 
 ---
 
