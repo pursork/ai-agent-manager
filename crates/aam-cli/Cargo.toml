@@ -14,4 +14,6 @@ aam-vault = { path = "../aam-vault" }
 aam-skills = { path = "../aam-skills" }
 aam-switcher = { path = "../aam-switcher" }
 aam-memory = { path = "../aam-memory" }
+aam-sync = { path = "../aam-sync" }
 clap = { version = "4", features = ["derive"] }
+rpassword = "7"

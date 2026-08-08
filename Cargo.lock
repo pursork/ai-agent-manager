@@ -10,8 +10,10 @@ dependencies = [
  "aam-memory",
  "aam-skills",
  "aam-switcher",
+ "aam-sync",
  "aam-vault",
  "clap",
+ "rpassword",
 ]
 
 [[package]]

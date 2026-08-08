@@ -1,10 +1,11 @@
-use crate::cli::{Command, ProfileAction, ProviderAction, SkillsAction};
+use crate::cli::{Command, DeviceAction, ProfileAction, ProviderAction, SkillsAction, SyncAction};
 use aam_switcher::{
     build_provider, claude_backend, codex_backend, provider_secret_store, ApplyCodexProvider,
     Profile, ProfileRegistry, Provider, ProviderRecord, ProviderRegistry, Tool,
 };
 use std::error::Error;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 pub fn run(command: Command) -> Result<(), Box<dyn Error>> {
     match command {
@@ -13,6 +14,8 @@ pub fn run(command: Command) -> Result<(), Box<dyn Error>> {
         Command::Claude { label, extra } => run_launch(Tool::Claude, &label, &extra),
         Command::Codex { label, extra } => run_launch(Tool::Codex, &label, &extra),
         Command::Skills { action } => run_skills(action),
+        Command::Device { action } => run_device(action),
+        Command::Sync { action } => run_sync(action),
     }
 }
 
@@ -289,6 +292,151 @@ fn run_skills(action: SkillsAction) -> Result<(), Box<dyn Error>> {
                         .into());
                     }
                 }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Local per-machine state for `aam-sync` (this device's age identity) --
+/// distinct from `aam_core::aam_home()`'s other subdirectories, which hold
+/// Profile/Provider registries, not sync state.
+fn sync_state_dir() -> PathBuf {
+    aam_core::aam_home().join("sync")
+}
+
+fn prompt_hidden(prompt: &str) -> Result<String, Box<dyn Error>> {
+    Ok(rpassword::prompt_password(prompt)?)
+}
+
+fn webdav_backend(url: String, user: String, password: String) -> aam_sync::WebDavBackend {
+    aam_sync::WebDavBackend::new(url, user, password)
+}
+
+fn require_local_identity() -> Result<aam_sync::LocalIdentity, Box<dyn Error>> {
+    aam_sync::local_identity(&sync_state_dir())?.ok_or_else(|| {
+        "no local device identity yet -- run `aam sync init` (new vault) or `aam device join` \
+         (existing vault) first"
+            .into()
+    })
+}
+
+fn run_device(action: DeviceAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        DeviceAction::Join { webdav_url, webdav_user, label } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let entry = aam_sync::join_device_to_vault(&backend, &sync_state_dir(), &passphrase, &label)?;
+            println!("joined vault as device '{}' ({})", entry.label, entry.device_id);
+            println!(
+                "note: this device is listed but cannot decrypt existing blobs yet -- ask an \
+                 already-authorized device to run `aam sync reencrypt`"
+            );
+            Ok(())
+        }
+
+        DeviceAction::List { webdav_url, webdav_user } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let manifest = aam_sync::list_devices(&backend, &passphrase)?;
+            for d in manifest.devices {
+                println!(
+                    "{:<36} {:<20} revoked={:<5} added={}",
+                    d.device_id, d.label, d.revoked, d.added_at
+                );
+            }
+            Ok(())
+        }
+
+        DeviceAction::Revoke { webdav_url, webdav_user, device_id } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            aam_sync::revoke_device_in_vault(&backend, &passphrase, &device_id)?;
+            println!(
+                "device '{device_id}' revoked -- run `aam sync reencrypt` so future pushes exclude it \
+                 (already-synced blobs stay readable to it until then, per docs/04 §4.4's documented \
+                 limitation)"
+            );
+            Ok(())
+        }
+    }
+}
+
+fn run_sync(action: SyncAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        SyncAction::Init { webdav_url, webdav_user, label } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Set a new vault master passphrase: ")?;
+            let confirm = prompt_hidden("Confirm master passphrase: ")?;
+            if passphrase != confirm {
+                return Err("passphrases did not match".into());
+            }
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let entry = aam_sync::init_vault(&backend, &sync_state_dir(), &passphrase, &label)?;
+            println!(
+                "vault initialized; this device registered as '{}' ({})",
+                entry.label, entry.device_id
+            );
+            Ok(())
+        }
+
+        SyncAction::Reencrypt { webdav_url, webdav_user } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+            let manifest = aam_sync::list_devices(&backend, &passphrase)?;
+            let recipients = manifest.active_recipients();
+
+            let registry = provider_registry();
+            let results = aam_switcher::reencrypt_all_known_providers(
+                &backend,
+                &registry,
+                &identity.private_key,
+                &recipients,
+                &identity.device_id,
+            )?;
+            for (id, meta) in results {
+                match meta {
+                    Some(m) => println!("re-encrypted provider '{id}' (now version {})", m.version),
+                    None => println!("provider '{id}': no blob to re-encrypt yet (never pushed)"),
+                }
+            }
+            Ok(())
+        }
+
+        SyncAction::Push { webdav_url, webdav_user, provider } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+            let manifest = aam_sync::list_devices(&backend, &passphrase)?;
+            let recipients = manifest.active_recipients();
+
+            let registry = provider_registry();
+            let meta = aam_switcher::push_provider(
+                &backend,
+                &registry,
+                &provider,
+                &recipients,
+                &identity.device_id,
+            )?;
+            println!("pushed provider '{provider}' (version {})", meta.version);
+            Ok(())
+        }
+
+        SyncAction::Pull { webdav_url, webdav_user, provider } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+
+            let registry = provider_registry();
+            match aam_switcher::pull_provider(&backend, &registry, &provider, &identity.private_key)? {
+                Some(meta) => println!("pulled provider '{provider}' (version {})", meta.version),
+                None => println!("no blob found for provider '{provider}' at this vault"),
             }
             Ok(())
         }

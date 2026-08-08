@@ -36,6 +36,19 @@ pub enum Command {
         #[command(subcommand)]
         action: SkillsAction,
     },
+    /// Manage devices in a WebDAV-synced vault (`docs/04-webdav-sync-security.md`).
+    Device {
+        #[command(subcommand)]
+        action: DeviceAction,
+    },
+    /// WebDAV-synced vault: create it, re-encrypt after a device joins,
+    /// and push/pull Provider config (`docs/04-webdav-sync-security.md`).
+    /// Phase 2's first cut only syncs Provider configuration, not account
+    /// login state (`docs/08-open-questions-risks.md` #15).
+    Sync {
+        #[command(subcommand)]
+        action: SyncAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +130,80 @@ pub enum SkillsAction {
         /// Comma-separated targets. Phase 1 supports `codex`.
         #[arg(long = "share-with")]
         share_with: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DeviceAction {
+    /// Joins an existing vault as a new device (`04.3` steps 1-5). Does
+    /// **not** grant access to existing blobs yet -- run `aam sync
+    /// reencrypt` on an already-authorized device afterwards.
+    Join {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        label: String,
+    },
+    /// Lists devices in the vault (label / id / revoked status).
+    List {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+    },
+    /// Marks a device revoked (`04.4`). Run `aam sync reencrypt` afterwards
+    /// so future pushes exclude it.
+    Revoke {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        device_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SyncAction {
+    /// Creates a brand new vault at this WebDAV location (this device
+    /// becomes its first device). Errors if a vault already exists there
+    /// -- use `aam device join` instead.
+    Init {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        label: String,
+    },
+    /// Re-encrypts every provider config this device's local registry
+    /// knows about, to the vault's current device list (`04.3` step 6's
+    /// manual version) -- run this after a new device joins.
+    Reencrypt {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+    },
+    /// Pushes one provider's config + API key to the vault.
+    Push {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        provider: String,
+    },
+    /// Pulls one provider's config + API key from the vault into the local
+    /// registry (creating or overwriting it).
+    Pull {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        provider: String,
     },
 }
 
