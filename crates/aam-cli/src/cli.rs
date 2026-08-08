@@ -42,9 +42,8 @@ pub enum Command {
         action: DeviceAction,
     },
     /// WebDAV-synced vault: create it, re-encrypt after a device joins,
-    /// and push/pull Provider config (`docs/04-webdav-sync-security.md`).
-    /// Phase 2's first cut only syncs Provider configuration, not account
-    /// login state (`docs/08-open-questions-risks.md` #15).
+    /// and push/pull Provider config or account login credentials
+    /// (`docs/04-webdav-sync-security.md` §§4.6/4.10).
     Sync {
         #[command(subcommand)]
         action: SyncAction,
@@ -204,6 +203,51 @@ pub enum SyncAction {
         webdav_user: String,
         #[arg(long)]
         provider: String,
+    },
+    /// Pushes a Profile's official login credential (`.credentials.json` /
+    /// `auth.json`, not the rest of its config directory) to the vault
+    /// (`04.10`). Claude's WebDAV key is `label` itself; Codex's is a
+    /// fingerprint derived from the credential's own JWT claims (shown in
+    /// `aam sync list-accounts` afterwards).
+    PushAccount {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        tool: ToolArg,
+        /// The local Profile whose credential file to push.
+        #[arg(long)]
+        label: String,
+    },
+    /// Lists accounts pushed to this vault (tool / key / label hint / email
+    /// hint) -- run this before `pull-account` to see what's available,
+    /// since there's no WebDAV directory listing to discover it otherwise.
+    ListAccounts {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+    },
+    /// Pulls an account credential from the vault. Creates the local
+    /// Profile named `--as` if none exists yet for `--tool`, then writes
+    /// the decrypted credential file into it -- no separate `profile add`
+    /// needed first.
+    PullAccount {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
+        #[arg(long)]
+        tool: ToolArg,
+        /// The vault key from `aam sync list-accounts` (a label for
+        /// Claude, a fingerprint for Codex).
+        #[arg(long)]
+        key: String,
+        /// Local Profile label to create/overwrite with the pulled
+        /// credential.
+        #[arg(long = "as")]
+        as_label: String,
     },
 }
 

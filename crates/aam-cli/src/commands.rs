@@ -440,5 +440,73 @@ fn run_sync(action: SyncAction) -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
+
+        SyncAction::PushAccount { webdav_url, webdav_user, tool, label } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+            let manifest = aam_sync::list_devices(&backend, &passphrase)?;
+            let recipients = manifest.active_recipients();
+
+            let tool: Tool = tool.into();
+            let registry = profile_registry();
+            let profile = get_profile(&registry, tool, &label)?;
+            let meta = aam_switcher::push_account(
+                &backend,
+                &profile,
+                &recipients,
+                &identity.device_id,
+                &passphrase,
+            )?;
+            println!(
+                "pushed {tool} account credential for '{label}' (version {})",
+                meta.version
+            );
+            Ok(())
+        }
+
+        SyncAction::ListAccounts { webdav_url, webdav_user } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let accounts = aam_switcher::list_accounts(&backend, &passphrase)?;
+            if accounts.is_empty() {
+                println!("(no accounts pushed to this vault yet)");
+            }
+            for a in accounts {
+                println!(
+                    "{:<8} {:<24} label={:<16} email={}",
+                    a.tool,
+                    a.key,
+                    a.label_hint,
+                    a.email_hint.as_deref().unwrap_or("-")
+                );
+            }
+            Ok(())
+        }
+
+        SyncAction::PullAccount { webdav_url, webdav_user, tool, key, as_label } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+
+            let tool: Tool = tool.into();
+            let registry = profile_registry();
+            let profile = aam_switcher::pull_account(
+                &backend,
+                &registry,
+                tool,
+                &key,
+                &as_label,
+                &identity.private_key,
+            )?;
+            println!(
+                "pulled {tool} account credential '{key}' into local profile '{}' -- \
+                 run `aam {tool} {}` to use it",
+                profile.label, profile.label
+            );
+            Ok(())
+        }
     }
 }
