@@ -34,6 +34,7 @@
 |---|---|---|---|
 | 8 | "项目"的跨设备逻辑身份用什么做主键——物理路径在不同设备上大概率不同 | `05.2`；Phase 3a（本地模型+发现/采集）不需要这个就能工作，`aam project list/show/resume` 目前都是单机视图 | Phase 3b（`aam session sync`/跨设备聚合视图）立项时定：候选方案是引入一个用户可选/可改的 `projectId`（首次记录时生成，允许用户手动关联"设备A的这个路径"和"设备B的那个路径"是同一个逻辑项目），而不是试图自动猜测 |
 | 17 | `aam session adopt --summarize`（`05.8`）需要调用一个 Provider 生成摘要，但 `Provider` trait 今天只有 `materialize`/`verify`/`api_key`，没有"给一段文本，返回补全"的通用能力 | `05.8`；Phase 3a 的 `aam session adopt` 里 `--summarize` 尚未实现（CLI 文档已注明） | Phase 3b 或更早的独立提交：给 `aam-switcher::Provider` 加一个 `complete(prompt) -> Result<String, _>` 之类的方法，Claude/CPA/DeepSeek 各自实现；不在 Phase 3a 里顺手加，因为这是一个会影响 `Provider` trait 公开签名的改动，值得单独过一遍设计 |
+| 18 | `aam` 接管 `project-tracker` 的实时记录能力（生成 hook 脚本 + 改写用户 `~/.claude/settings.json` 的 hooks 配置），而不只是收编脚本内容（`09.10` 已完成的部分） | `05.1` 的结论——`project-tracker` 目前是"实时记录"这一层唯一的实现，`aam` 没有常驻进程/hook 注册机制 | 非阻塞，独立于 Phase 3b 立项：这会直接触碰用户当前生效的工具配置，风险类别与"不改 hook 脚本"这条既有边界（`08` #9）一致，值得单独设计"如何安全地改写别的工具的 settings.json"这件事本身（例如显式命令 + 改前展示 diff + 可回滚），不能在其他任务里顺手做 |
 
 ## 8.5 不阻塞任何 Phase，但需要长期关注的风险
 

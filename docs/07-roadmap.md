@@ -52,6 +52,14 @@
 - `aam-cli` 新增 `project list/show/resume`（本机视图）。
 - **本机会话发现与采集**（`05.7`-`05.9`）：`aam session scan`（跨 Claude/Codex、跨已注册 Profile 的只读扫描）、`aam session adopt`（写本地索引，`discoverySource=scan`/`syncApproved=false`——**硬性约束：扫描出的内容默认不出本机**）、`aam session approve-sync`。`--summarize` 尚未实现（需要 `Provider` trait 先加一个通用的"文本补全"能力，见 `08` #17），Codex 会话的 `autoStatus` 目前留空。
 
+### Phase 3a 附加项 — project-tracker 收编为附带 skill（已完成）
+
+原定 Phase 3b 之前插入的一轮：`project-tracker` 确认暂时不能停用（`aam` 还没有接管 Claude Code hook 注册的能力，见 `08` 新增项），于是收编成 aam 自己维护的附带 skill，而不是放任它作为脱节的独立技能：
+
+- `crates/aam-skills/bundled/project-tracker/`：`SKILL.md` + 改造后的 `track-session.ps1`/`backfill-index.ps1`，`include_str!` 嵌入二进制。
+- `aam skills install-bundled [name] [--force]`：物化安装，默认不覆盖冲突内容，不碰 `settings.json` 的 hook 注册（那一步仍是手动的，`SKILL.md` 里有说明）。
+- `aam whoami --tool <claude|codex>`：新的只读诊断命令，收编后的脚本靠它正确填 `deviceId`/`profileLabel`（`09.10`）。
+
 ### Phase 3b — 跨设备聚合 + WebDAV 同步（待立项）
 
 - `aam-memory` 索引通过 `aam-sync` 同步的跨设备版本；`aam-cli` 的 `project list/show/resume` 升级为真正的跨设备聚合视图。

@@ -39,6 +39,8 @@
 - `discoverySource`：`live` = 正常使用中经由 hook 实时记录（今天 `project-tracker` 的现有行为）；`scan` = 通过 `aam session scan`/`adopt` 回溯采集出来的历史会话（见 5.7-5.9）。
 - `syncApproved`：这条记录是否允许被 `aam session sync` 推送到 WebDAV。`live` 记录默认 `true`（沿用 G3 既定的"进度元信息默认同步"目标）；`scan` 来源的记录默认 **`false`**，必须用户显式 `aam session approve-sync` 才会变成 `true`。这是本轮新增的硬性原则：**"被发现"和"被同步"是两回事**，回溯采集不应该在用户没意识到的情况下把一堆历史项目路径/时间戳推到云端。
 
+> `project-tracker` 已收编为 aam 的附带 skill（`aam skills install-bundled project-tracker`，见 `09.10`）。装的是收编后的新版 `track-session.ps1`/`backfill-index.ps1` 的话，`deviceId`/`profileLabel` 会通过 `aam whoami` 正确写入；仍在用旧版脚本、或从未通过 `aam claude <label>` 启动过会话，这两个字段就是 `serde(default)` 兜底的空值——两种状态都合法，`aam-memory` 读取时不区分对待。
+
 - `deviceId` + `toolKind`：跨设备/跨工具场景下，"同一个项目路径 `X`"在设备 A 用 Claude 做过、在设备 B 用 Codex 做过，这两条记录**不合并成一条**，而是分别记录，但在 UI 上按项目"聚合展示"（同一个逻辑项目下面挂多条设备/工具/时间线记录）。项目的"逻辑身份"用什么做主键，是本模块需要在 Phase 3 立项时进一步定义的问题（候选：项目名 + 一个用户可选的稳定项目 ID，而不是物理路径，因为同一项目在不同设备上的绝对路径大概率不同）——记入 `08`。
 - `fullSyncEnabled` / `fullSyncStatus`：见 5.4。
 

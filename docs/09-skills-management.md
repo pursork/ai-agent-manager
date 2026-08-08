@@ -94,6 +94,7 @@ Windows 上"符号链接"（`mklink /D`，或 `CreateSymbolicLink` API）默认�
 aam skills list                                  # 列出已纳管 skill 及其链接目标（Phase 1）
 aam skills status                                # 检测规范仓库/各链接目标状态是否健康，git 仓库则提示自行同步（Phase 1）
 aam skills adopt <name> --share-with <targets>   # 显式跨工具/跨 Profile 共享（Phase 1，仅限已在规范位置的 skill）
+aam skills install-bundled [name] [--force]      # 安装 aam 自带的 skill（已实现，见 9.10）
 aam skills scan                                  # 发现本机未纳管 skill（Phase 3）
 aam skills adopt <name> [--share-with <targets>] # 完整纳管流程，含移动到规范位置（Phase 3 扩展 9.6）
 aam skills check-updates                         # 检查 GitHub 来源 skill 是否有更新（Phase 3）
@@ -101,6 +102,15 @@ aam skills update <name>                         # 应用更新（Phase 3）
 ```
 
 Phase 1 和 Phase 3 用同一个 `adopt` 子命令名，语义是渐进扩展（Phase 1 版本只处理"已经在规范位置、只是要不要多建几个链接"这个子集，Phase 3 版本补上"从非规范位置移动过来"的完整流程），不是两个不同命令，避免用户需要记两套命令名。
+
+## 9.10 附带 skill：`project-tracker`（已实现）
+
+`aam-memory` 直接读写 `project-tracker` 维护的 `project-index.json`（`05.1`、`08` #9），两者关系紧密到值得把 `project-tracker` 本身收作 aam 的**附带 skill**，随 aam 仓库一起维护——而不是让它继续作为用户自己那份、逐渐和 aam 的 schema 脱节的独立技能。
+
+- **存放/嵌入**：`crates/aam-skills/bundled/project-tracker/`（`SKILL.md` + `scripts/*.ps1`），编译期用 `include_str!` 嵌进 `aam-skills` 二进制，运行时不依赖能找到仓库源码——为将来单文件分发铺路。
+- **`aam skills install-bundled [name] [--force]`**：把嵌入的内容物化写入 `~/.claude/skills/<name>`。默认**拒绝覆盖**已存在且内容不同的目录（提示用 `--force`）；内容完全一致视为幂等成功。**明确不做**的事：不碰 `~/.claude/settings.json` 的 hook 注册——这仍然是"aam 不代用户改当前生效的工具配置"这条边界内的动作，注册 SessionStart/SessionEnd hook 是用户照着装完后打印的说明手动做的一步。
+- **`aam whoami --tool <claude|codex>`**：只读诊断命令，输出 `{"toolKind","profileLabel","deviceId"}` JSON。收编后的 `track-session.ps1`/`backfill-index.ps1` 会 shell 出去调用它，把 `05.2` 定义的 `deviceId`/`profileLabel` 正确填进 `project-index.json`（`toolKind` 因为这个 hook 只服务 Claude Code，脚本里直接硬编码 `"claude"`，不用查）。`aam` 不在 PATH、调用失败、或这个 Claude 会话根本不是通过 `aam claude <label>` 启动的，都是合法状态，脚本一律退化为空值，绝不因此中断 hook（沿用脚本自身"失败静默吞掉、永远 exit 0"的既有原则）。
+- 之所以能这样做：`CLAUDE_CONFIG_DIR` 会沿子进程链从 `aam claude <label>` 一路继承到 hook 脚本自己的进程里，`aam whoami` 不需要额外参数就能读到它，反查 `aam profile list` 里哪个 Profile 用的是这个目录（`aam-switcher::Tool::actual_config_dir`/`ProfileRegistry::find_by_config_dir`）。`deviceId` 同理来自 `aam-sync` 本机身份（`aam sync init`/`join` 建立），没建过就是 `null`，不是错误。
 
 ## 9.9 与其他模块的关系
 
