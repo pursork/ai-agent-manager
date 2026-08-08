@@ -1,52 +1,32 @@
-//! Placeholder crate — Phase 2 (see `docs/04-webdav-sync-security.md`) will
-//! turn this into the WebDAV encrypted sync engine: `devices.json.age`
-//! read/write, multi-recipient blob encryption, push/pull, conflict
-//! detection via version numbers.
+//! WebDAV encrypted sync engine (`docs/04-webdav-sync-security.md`).
 //!
-//! Phase 0 only exists to prove out the workspace's crate graph and to give
-//! `aam-switcher`/`aam-memory` a real (if empty) dependency to build against.
+//! This crate is deliberately domain-agnostic: it knows how to talk to a
+//! storage backend, encrypt/decrypt with `age`, manage a device manifest,
+//! and resolve version conflicts on versioned blobs -- but it has no idea
+//! what a "Provider" or "Profile" is. Domain-specific wiring (e.g.
+//! "push `aam_switcher::ProviderRecord` to `providers/<id>.blob.age`")
+//! lives in the crates that already depend on both `aam-sync` and the
+//! domain crate (`aam-switcher`, per `docs/02-architecture.md`'s
+//! dependency graph), not here -- `aam-sync` must not depend back on
+//! `aam-switcher`, or the crate graph would cycle.
 
-/// Phase 0 placeholder confirming `aam-sync` compiles as part of the
-/// workspace. Superseded once Phase 2 adds real sync operations.
-pub fn placeholder() -> &'static str {
-    "aam-sync (Phase 0 placeholder, depends on aam-core)"
-}
+mod age_crypto;
+mod backend;
+mod blob;
+mod device;
+mod manifest_ops;
+mod util;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::convert::Infallible;
-
-    #[test]
-    fn placeholder_mentions_crate_name() {
-        assert!(placeholder().contains("aam-sync"));
-    }
-
-    /// Exercises the `aam-core` dependency edge (not just declares it) by
-    /// implementing `TransactionalOp` with it, per Phase 0's requirement
-    /// that the workspace's declared dependency graph is actually compiled
-    /// and linked, not merely listed in `Cargo.toml`.
-    #[test]
-    fn depends_on_aam_core() {
-        struct NoopOp;
-        impl aam_core::TransactionalOp for NoopOp {
-            type Snapshot = ();
-            type Error = Infallible;
-            fn snapshot(&self) -> Result<(), Infallible> {
-                Ok(())
-            }
-            fn apply(&mut self) -> Result<(), Infallible> {
-                Ok(())
-            }
-            fn verify(&self) -> Result<(), Infallible> {
-                Ok(())
-            }
-            fn rollback(&mut self, _snapshot: ()) -> Result<(), Infallible> {
-                Ok(())
-            }
-        }
-
-        let mut op = NoopOp;
-        aam_core::execute(&mut op).expect("noop transactional op should succeed");
-    }
-}
+pub use age_crypto::{
+    decrypt_multi_recipient, decrypt_with_passphrase, encrypt_multi_recipient,
+    encrypt_with_passphrase, generate_device_keypair, CryptoError,
+};
+pub use backend::{BackendError, LocalDirBackend, SyncBackend, WebDavBackend};
+pub use blob::{
+    current_version, pull_if_newer, push_if_not_stale, BlobMeta, ConflictError, VersionedBlob,
+};
+pub use device::{join_device, revoke_device, DeviceEntry, DeviceError, DeviceManifest};
+pub use manifest_ops::{
+    init_vault, join_device_to_vault, list_devices, local_identity, revoke_device_in_vault,
+    LocalIdentity, ManifestOpError, DEVICES_MANIFEST_PATH,
+};
