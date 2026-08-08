@@ -6,6 +6,8 @@ members = [
     "crates/aam-sync",
     "crates/aam-switcher",
     "crates/aam-memory",
+    "crates/aam-cli",
+    "crates/aam-gui",
 ]
 
 [workspace.package]

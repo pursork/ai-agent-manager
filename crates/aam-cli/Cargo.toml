@@ -1,0 +1,13 @@
+[package]
+name = "aam-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "aam"
+path = "src/main.rs"
+
+[dependencies]
+aam-switcher = { path = "../aam-switcher" }
+aam-memory = { path = "../aam-memory" }

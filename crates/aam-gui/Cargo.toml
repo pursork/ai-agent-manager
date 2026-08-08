@@ -1,0 +1,11 @@
+[package]
+name = "aam-gui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "aam-gui"
+path = "src/main.rs"
+
+[dependencies]
