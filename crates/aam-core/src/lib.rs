@@ -9,7 +9,9 @@
 //! snapshot/rollback logic.
 
 mod atomic;
+mod home;
 mod transactional;
 
 pub use atomic::atomic_write;
+pub use home::{aam_home, user_home_dir};
 pub use transactional::{execute, ExecuteError, RollbackFailed, TransactionalOp};

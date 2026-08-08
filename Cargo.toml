@@ -4,6 +4,7 @@ members = [
     "crates/aam-core",
     "crates/aam-vault",
     "crates/aam-sync",
+    "crates/aam-skills",
     "crates/aam-switcher",
     "crates/aam-memory",
     "crates/aam-cli",

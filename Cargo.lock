@@ -27,9 +27,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aam-skills"
+version = "0.1.0"
+dependencies = [
+ "aam-core",
+]
+
+[[package]]
 name = "aam-switcher"
 version = "0.1.0"
 dependencies = [
+ "aam-core",
+ "aam-skills",
  "aam-sync",
  "aam-vault",
 ]
