@@ -44,7 +44,9 @@
 - `deviceId` + `toolKind`：跨设备/跨工具场景下，"同一个项目路径 `X`"在设备 A 用 Claude 做过、在设备 B 用 Codex 做过，这两条记录**不合并成一条**，而是分别记录，但在 UI 上按项目"聚合展示"（同一个逻辑项目下面挂多条设备/工具/时间线记录）。项目的"逻辑身份"用什么做主键，是本模块需要在 Phase 3 立项时进一步定义的问题（候选：项目名 + 一个用户可选的稳定项目 ID，而不是物理路径，因为同一项目在不同设备上的绝对路径大概率不同）——记入 `08`。
 - `fullSyncEnabled` / `fullSyncStatus`：见 5.4。
 
-## 5.3 跨设备 Resume 的默认行为：只提示，不搬迁
+## 5.3 跨设备 Resume 的默认行为：只提示，不搬迁（已实现）
+
+`aam project resume` 已经实现下面的流程图：本机+镜像拼接查找、路径存在性检查、找不到时打印设备提示而不是失效的 `cd`/`resume` 命令。**`enable-full-sync` 那一句建议这轮没加进提示文案**——它是 Phase 6 才有的功能，现在提会让用户以为已经能用。
 
 沿用 `project-tracker` 已经确立的原则（"Claude 不能替用户 cd，只能给命令提示"），跨设备场景下同样**默认绝不自动搬迁/重建项目目录**：
 
@@ -91,10 +93,10 @@ Memory-Bank 记录里的 `profileLabel` 字段，是"resume 提示"里附加的�
 
 ```
 aam project list                       # 本机 + 已同步的跨设备镜像（拼接展示，见下）
-aam project show <name>                # 模糊匹配，打印匹配到的每条记录详情
-aam project resume <name>              # 打印 cd + resume 命令，绝不代跑；Profile 缺失/非官方后端会警告
-                                        # （目前只在本机索引里查找，跨设备 resume 的"本地无该目录"
-                                        #  提示文案见 5.3，尚未实现，是待补的小项）
+aam project show <name>                # 模糊匹配，打印匹配到的每条记录详情（含 projectId）
+aam project resume <name>              # 打印 cd + resume 命令，绝不代跑；Profile 缺失/非官方后端会警告，
+                                        # 本机找不到目录时按 5.3 打印设备提示而不是失效的命令
+aam project link <path-a> <path-b>     # 手动关联两条记录为同一逻辑项目（08 #8，见下）
 
 aam session scan                       # 对已注册的每个 Profile 只读扫描，不改索引（5.7）
 aam session adopt                      # 采集入库：写本地索引，syncApproved=false（5.8）；
@@ -108,7 +110,7 @@ aam session sync                       # 同步 Memory-Bank 索引：拉取共�
                                         # → 推回去
 ```
 
-`aam project list`/`show` 展示时把本机索引和 `remote-index.json` 镜像简单拼接，**不做真正的跨设备去重**——同一个逻辑项目在两台设备上会显示成两行（各自的 `deviceId`/`profileLabel`），这是有意的：真正按项目身份合并需要 `08` #8 的 `projectId` 关联机制，本轮只加了字段占位，没做匹配逻辑。
+`aam project list`/`show` 展示时把本机索引和 `remote-index.json` 镜像简单拼接，**不做自动的跨设备去重**——同一个逻辑项目在两台设备上默认显示成两行（各自的 `deviceId`/`profileLabel`）。`aam project link` 提供手动关联（`08` #8）：给两条记录（可以一条在本机、一条在镜像）打上同一个 `projectId`，不猜、不自动匹配同名/同路径——展示层暂时还是不按 `projectId` 分组渲染成一行，这两条记录只是"肉眼可核对已关联"，真正的分组渲染留给以后有需要再做。
 
 **待实现**：
 
