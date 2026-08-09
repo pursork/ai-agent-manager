@@ -52,7 +52,12 @@ pub fn wt_available() -> bool {
 /// `command` already running and `-NoExit` so the window stays open
 /// afterwards for the user to keep working in. Pure -- no filesystem or
 /// process access -- so it's unit-testable on its own.
-fn powershell_args(command: &str) -> Vec<String> {
+///
+/// `pub` (Phase 5 Round 2): `screens/embedded_terminal.rs` builds the
+/// exact same argv for `iced_term`'s `BackendSettings.args` -- one
+/// shared command-line shape for both the external-window and embedded-
+/// tab launch paths, not two copies that could drift apart.
+pub fn powershell_args(command: &str) -> Vec<String> {
     vec!["-NoExit".to_string(), "-Command".to_string(), command.to_string()]
 }
 

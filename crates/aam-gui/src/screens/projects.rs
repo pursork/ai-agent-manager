@@ -50,6 +50,10 @@ pub enum Message {
     ToggleExpanded(String),
     Resume(String),
     Resumed(String, Result<(), String>),
+    /// Resume into an embedded terminal tab instead of an external
+    /// window (Phase 5 Round 2). Handled entirely by `app::update`
+    /// (needs `state.terminal`) -- see the no-op arm in [`update`].
+    ResumeEmbedded(String),
     LinkPathAChanged(String),
     LinkPathBChanged(String),
     SubmitLink,
@@ -70,11 +74,24 @@ pub fn load() -> Task<Message> {
 /// The tool a record's Profile lookup needs -- `ProjectRecord::tool_kind`
 /// is a plain string (`05.2`'s on-disk schema), `"codex"` or anything
 /// else (including legacy records that predate the field) means Claude.
-fn record_tool(record: &ProjectRecord) -> Tool {
+///
+/// `pub(crate)`: `app.rs` reuses this for the embedded-tab resume path
+/// (Phase 5 Round 2) rather than re-deriving the same tool_kind check.
+pub(crate) fn record_tool(record: &ProjectRecord) -> Tool {
     if record.tool_kind == "codex" {
         Tool::Codex
     } else {
         Tool::Claude
+    }
+}
+
+/// The actual resume command line for a record -- shared by both the
+/// external-window path (below) and the embedded-tab path (`app.rs`,
+/// Phase 5 Round 2), so they never drift apart.
+pub(crate) fn resume_command(tool: Tool, last_session_id: &str) -> String {
+    match tool {
+        Tool::Codex => format!("codex resume {last_session_id}"),
+        Tool::Claude => format!("claude --resume {last_session_id}"),
     }
 }
 
@@ -131,15 +148,11 @@ pub fn update(state: &mut State, message: Message, profiles: &[Profile], provide
             }
 
             let providers = providers.to_vec();
-            let last_session_id = record.last_session_id.clone();
+            let command = resume_command(tool, &record.last_session_id);
             let project_path = record.path.clone();
             perform(
                 move || {
                     let env = crate::launch::launch_env(tool, &profile, &providers);
-                    let command = match tool {
-                        Tool::Codex => format!("codex resume {last_session_id}"),
-                        Tool::Claude => format!("claude --resume {last_session_id}"),
-                    };
                     crate::terminal::open_terminal(Some(Path::new(&project_path)), &env, &command)
                         .map(|_child| ())
                         .map_err(|e| e.to_string())
@@ -147,6 +160,11 @@ pub fn update(state: &mut State, message: Message, profiles: &[Profile], provide
                 move |result| Message::Resumed(path.clone(), result),
             )
         }
+        // `app::update` intercepts this variant before it ever reaches
+        // here (it needs `state.terminal`, a sibling screen this module
+        // has no access to) -- kept as a no-op arm purely so this match
+        // stays exhaustive.
+        Message::ResumeEmbedded(_) => Task::none(),
         Message::Resumed(path, Ok(())) => {
             state.resume_status.remove(&path);
             Task::none()
@@ -198,7 +216,11 @@ pub fn update(state: &mut State, message: Message, profiles: &[Profile], provide
 /// Whether "接续" should be clickable for `record` right now, and if not,
 /// the human-readable reason to show instead of the button (design
 /// principle #3: no raw error dumps).
-fn resumable(record: &ProjectRecord, profiles: &[Profile]) -> Result<(), String> {
+///
+/// `pub(crate)`: `app.rs` reuses this same gate for the embedded-tab
+/// resume path (Phase 5 Round 2) -- one set of rules for "can this
+/// record be resumed right now", not two.
+pub(crate) fn resumable(record: &ProjectRecord, profiles: &[Profile]) -> Result<(), String> {
     if !Path::new(&record.path).is_dir() {
         let device_note = if record.device_id.is_empty() {
             String::new()
@@ -297,7 +319,15 @@ fn project_card<'a>(state: &'a State, record: &'a ProjectRecord, profiles: &'a [
         .spacing(SPACING_SM)
         .into(),
         None => match resumable(record, profiles) {
-            Ok(()) => primary_button("接续", Some(Message::Resume(record.path.clone()))).into(),
+            Ok(()) => row![
+                primary_button("接续", Some(Message::Resume(record.path.clone()))),
+                // Phase 5 Round 2: same eligibility check, just opens an
+                // embedded tab instead of an external window -- both
+                // stay available side by side, external isn't removed.
+                secondary_button("接续（内嵌）", Some(Message::ResumeEmbedded(record.path.clone()))),
+            ]
+            .spacing(SPACING_SM)
+            .into(),
             Err(reason) => row![
                 text(reason).size(12),
                 primary_button("接续", None), // visibly present but disabled -- not hidden, so it's clear *why* nothing happens

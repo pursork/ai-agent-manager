@@ -69,6 +69,10 @@ pub enum Message {
     VerifyResult(Tool, String, Result<bool, String>),
     OpenTerminal(Tool, String),
     TerminalOpened(Result<(), String>),
+    /// Open into an embedded terminal tab instead of an external window
+    /// (Phase 5 Round 2). Handled entirely by `app::update` (needs
+    /// `state.terminal`) -- see the no-op arm in [`update`].
+    OpenEmbedded(Tool, String),
     AssignProvider(Tool, String, String),
     ProviderAssigned(Result<(String, Tool), String>),
 }
@@ -164,6 +168,7 @@ pub fn update(state: &mut State, message: Message, providers: &[ProviderRecord])
             state.status_message = Some(format!("打开终端失败: {e}"));
             Task::none()
         }
+        Message::OpenEmbedded(..) => Task::none(),
         Message::AssignProvider(tool, label, provider_id) => {
             let profile = state.profiles.iter().find(|p| p.tool == tool && p.label == label).cloned();
             let provider_record = providers.iter().find(|p| p.id == provider_id).cloned();
@@ -268,6 +273,7 @@ pub fn view<'a>(state: &'a State, providers: &'a [ProviderRecord]) -> Element<'a
             text(status_text).width(Length::Fixed(80.0)),
             secondary_button("验证", Some(Message::Verify(profile.tool, profile.label.clone()))),
             primary_button("打开终端", Some(Message::OpenTerminal(profile.tool, profile.label.clone()))),
+            secondary_button("打开终端（内嵌）", Some(Message::OpenEmbedded(profile.tool, profile.label.clone()))),
             assign_row,
         ]
         .spacing(SPACING_MD)
