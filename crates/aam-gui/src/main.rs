@@ -1,10 +1,16 @@
-//! `aam-gui` — the `iced` terminal GUI shell.
+//! `aam-gui` — the `iced` GUI shell (`docs/06-gui-terminal-shell.md`).
 //!
-//! Phase 0 placeholder only. Per `docs/06-gui-terminal-shell.md`, the GUI
-//! does not add its own business logic; Phase 4 will wire this up to call
-//! `aam-switcher`/`aam-memory` (via `aam-cli`'s logic layer) and Phase 5
-//! embeds `iced_term`. No GUI dependencies are added until Phase 4.
+//! Phase 4 Round 1: Profile + Provider management, wrapping the same
+//! `aam-switcher` public API `aam-cli` already uses. No business logic
+//! lives here (§6.2) -- see `app.rs` and `screens/*`.
 
-fn main() {
-    println!("aam-gui — Phase 0 placeholder. GUI shell arrives in Phase 4 (see docs/07-roadmap.md).");
+mod app;
+mod screens;
+mod task;
+mod terminal;
+
+fn main() -> iced::Result {
+    iced::application(app::new, app::update, app::view)
+        .title("ai-agent-manager")
+        .run()
 }

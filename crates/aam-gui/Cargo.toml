@@ -9,3 +9,11 @@ name = "aam-gui"
 path = "src/main.rs"
 
 [dependencies]
+# GUI framework (docs/06-gui-terminal-shell.md §6.1, docs/01-prior-art.md §1.6:
+# iced_term is the only Windows-tested terminal widget in this ecosystem, so
+# the whole shell is built on iced rather than egui). Default features
+# (wgpu + tiny-skia renderer, thread-pool executor) are all Phase 4 Round 1
+# needs -- no image/svg/canvas widgets used yet.
+iced = "0.14"
+aam-switcher = { path = "../aam-switcher" }
+aam-core = { path = "../aam-core" }
