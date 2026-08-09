@@ -19,7 +19,7 @@ use std::path::Path;
 
 use aam_memory::{ProjectIndex, ProjectRecord};
 use aam_switcher::{Profile, ProviderRecord, Tool};
-use iced::widget::{column, container, row, scrollable, text, text_input};
+use iced::widget::{column, container, pick_list, row, scrollable, text, text_input};
 use iced::{Element, Length, Task};
 
 use crate::style::{primary_button, secondary_button, SPACING_LG, SPACING_MD, SPACING_SM};
@@ -37,6 +37,11 @@ pub struct State {
     pub query: String,
     pub expanded: HashSet<String>,
     pub resume_status: HashMap<String, ResumeStatus>,
+    /// Path -> chosen Profile label, present while that row's "接续
+    /// （内嵌）" confirm-and-maybe-override UI (`06.4` step 3: "上次用的
+    /// Profile 是 X，是否沿用？" -- also allows changing it) is open for
+    /// that row. Removed once confirmed or cancelled.
+    pub pending_embedded: HashMap<String, String>,
     pub link_path_a: String,
     pub link_path_b: String,
     pub link_status: Option<String>,
@@ -50,10 +55,18 @@ pub enum Message {
     ToggleExpanded(String),
     Resume(String),
     Resumed(String, Result<(), String>),
-    /// Resume into an embedded terminal tab instead of an external
-    /// window (Phase 5 Round 2). Handled entirely by `app::update`
-    /// (needs `state.terminal`) -- see the no-op arm in [`update`].
-    ResumeEmbedded(String),
+    /// Opens the "上次用的 Profile 是 X，是否沿用？" confirm/override row
+    /// for this record (`06.4` step 3) -- purely local UI state, no
+    /// terminal involved yet.
+    ResumeEmbeddedRequested(String),
+    /// User picked a different local Profile than the recorded one,
+    /// while the confirm row for `path` is open.
+    ResumeEmbeddedProfileChanged(String, String),
+    ResumeEmbeddedCancelled(String),
+    /// Confirmed (with whatever Profile ended up chosen) -- handled
+    /// entirely by `app::update` (needs `state.terminal`), see the
+    /// no-op arm in [`update`].
+    ResumeEmbeddedConfirmed(String),
     LinkPathAChanged(String),
     LinkPathBChanged(String),
     SubmitLink,
@@ -160,11 +173,29 @@ pub fn update(state: &mut State, message: Message, profiles: &[Profile], provide
                 move |result| Message::Resumed(path.clone(), result),
             )
         }
+        Message::ResumeEmbeddedRequested(path) => {
+            let default_label = state
+                .records
+                .iter()
+                .find(|r| r.path == path)
+                .and_then(|r| r.profile_label.clone())
+                .unwrap_or_default();
+            state.pending_embedded.insert(path, default_label);
+            Task::none()
+        }
+        Message::ResumeEmbeddedProfileChanged(path, label) => {
+            state.pending_embedded.insert(path, label);
+            Task::none()
+        }
+        Message::ResumeEmbeddedCancelled(path) => {
+            state.pending_embedded.remove(&path);
+            Task::none()
+        }
         // `app::update` intercepts this variant before it ever reaches
         // here (it needs `state.terminal`, a sibling screen this module
         // has no access to) -- kept as a no-op arm purely so this match
         // stays exhaustive.
-        Message::ResumeEmbedded(_) => Task::none(),
+        Message::ResumeEmbeddedConfirmed(_) => Task::none(),
         Message::Resumed(path, Ok(())) => {
             state.resume_status.remove(&path);
             Task::none()
@@ -318,13 +349,33 @@ fn project_card<'a>(state: &'a State, record: &'a ProjectRecord, profiles: &'a [
         ]
         .spacing(SPACING_SM)
         .into(),
+        None if state.pending_embedded.contains_key(&record.path) => {
+            // `06.4` step 3: "上次用的 Profile 是 X，是否沿用？" -- also
+            // lets the user pick a different local Profile of the same
+            // tool before confirming, rather than silently trusting the
+            // recorded one.
+            let tool = record_tool(record);
+            let chosen = state.pending_embedded.get(&record.path).cloned();
+            let candidates: Vec<String> = profiles.iter().filter(|p| p.tool == tool).map(|p| p.label.clone()).collect();
+            row![
+                text("沿用 Profile:").size(12),
+                pick_list(candidates, chosen, {
+                    let path = record.path.clone();
+                    move |label| Message::ResumeEmbeddedProfileChanged(path.clone(), label)
+                }),
+                primary_button("确认", Some(Message::ResumeEmbeddedConfirmed(record.path.clone()))),
+                secondary_button("取消", Some(Message::ResumeEmbeddedCancelled(record.path.clone()))),
+            ]
+            .spacing(SPACING_SM)
+            .into()
+        }
         None => match resumable(record, profiles) {
             Ok(()) => row![
                 primary_button("接续", Some(Message::Resume(record.path.clone()))),
                 // Phase 5 Round 2: same eligibility check, just opens an
                 // embedded tab instead of an external window -- both
                 // stay available side by side, external isn't removed.
-                secondary_button("接续（内嵌）", Some(Message::ResumeEmbedded(record.path.clone()))),
+                secondary_button("接续（内嵌）", Some(Message::ResumeEmbeddedRequested(record.path.clone()))),
             ]
             .spacing(SPACING_SM)
             .into(),

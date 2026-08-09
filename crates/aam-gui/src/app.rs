@@ -126,24 +126,31 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         // Same interception pattern as `OpenEmbedded` above, reusing
         // `projects::resumable`/`record_tool`/`resume_command` so the
         // eligibility rules and command line stay identical to the
-        // external-window resume path.
-        Message::Projects(projects::Message::ResumeEmbedded(path)) => {
+        // external-window resume path. Fires only after the user has
+        // confirmed (and possibly overridden) the Profile in the
+        // row's inline confirm UI (`06.4` step 3, `projects.rs`'s
+        // `pending_embedded`) -- the chosen label there, not
+        // `record.profile_label` directly, decides which Profile
+        // actually gets used.
+        Message::Projects(projects::Message::ResumeEmbeddedConfirmed(path)) => {
             let record = state.projects.records.iter().find(|r| r.path == path).cloned();
-            let Some(record) = record else {
+            let chosen_label = state.projects.pending_embedded.get(&path).cloned();
+            state.projects.pending_embedded.remove(&path);
+            let (Some(record), Some(chosen_label)) = (record, chosen_label) else {
                 return Task::none();
             };
-            if let Err(e) = projects::resumable(&record, &state.profiles.profiles) {
-                embedded_terminal::note_error(&mut state.terminal, e);
+            if chosen_label.is_empty() {
+                embedded_terminal::note_error(&mut state.terminal, "没有选一个本机 Profile".to_string());
                 return Task::none();
             }
             let tool = projects::record_tool(&record);
-            let profile = record
-                .profile_label
-                .as_ref()
-                .and_then(|label| state.profiles.profiles.iter().find(|p| p.tool == tool && &p.label == label).cloned());
+            if !Path::new(&record.path).is_dir() {
+                embedded_terminal::note_error(&mut state.terminal, "本机未找到这个目录".to_string());
+                return Task::none();
+            }
+            let profile = state.profiles.profiles.iter().find(|p| p.tool == tool && p.label == chosen_label).cloned();
             let Some(profile) = profile else {
-                // `resumable` above already checked this, but doesn't
-                // hurt to fail closed rather than unwrap.
+                embedded_terminal::note_error(&mut state.terminal, format!("本机没有 {tool} Profile '{chosen_label}'"));
                 return Task::none();
             };
             let env = crate::launch::launch_env(tool, &profile, &state.providers.providers);
