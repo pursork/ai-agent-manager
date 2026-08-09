@@ -88,3 +88,14 @@
 - **联网动作要让用户知道**：从 git 引入新 skill 会真的执行 `git clone`，表单旁边直接写"会执行真实的 git clone，需要网络"，不是弹确认框（用户已经手填地址、手点按钮，这本身就是确认），但不能让这件事变成隐藏信息。
 - **一个真实的编译器坑**：`aam_skills::ManagedSkill` 没有 `#[derive(Clone)]`（此前没有调用方需要克隆它），而 `iced::Message` 要求整体 `Clone`。没有为了这一个 GUI 用例去放宽 `aam-skills` 那个公开类型的 derive——改成 GUI 侧自己的 `ManagedSkillRow`（`Clone`，字段是 `ManagedSkill` 的子集），`From<ManagedSkill>` 转换一次。跟 Round 2 处理 `Provider: !Send` 是同一种应对方式：GUI 端需要的额外能力（`Clone`/`Send`），优先在 GUI 自己的类型上满足，不去改下游库的公开签名。
 - **复用 `aam-cli` 的 search_dirs 逻辑**：`skills_search_dirs`（规范仓库本身 + Codex 目录 + 每个未链接的 Claude Profile）跟 `commands.rs::skills_search_dirs` 一字不差地对应，`aam-gui` 已经在 `app.rs` 里持有 `profiles` 列表，不需要新依赖。这个函数本身依赖真实文件系统（`resolves_to` 检查真实 reparse point），跟 CLI 那份一样没有单测——只测了"给定 profiles 列表，返回的 labels 集合对不对"这种不碰真实链接状态的部分。
+
+## 6.10 Phase 4 Round 4 实现记录（已实现，Phase 4 收尾）
+
+`aam-sync`/`aam-switcher` 的设备/同步全量能力（`4.9`/`4.10`）+ 会话索引同步（`05`）汇总进新增的 `crates/aam-gui/src/screens/sync.rs`，Phase 4 到此全部完成：
+
+- **这轮唯一真正的新权衡：密码要不要跨动作记住**：CLI 每个子命令都重新提示输入 WebDAV 密码/vault 主密码，用完即弃；GUI 是长驻窗口，这个屏幕下有十来个共享同一份连接的动作，逐个重新弹密码框体验很差。**没有自己拍板**，先用 `AskUserQuestion` 跟用户确认，选择是"本次 `aam-gui` 运行期间记住"——两个密码字段存在 `sync::State` 里，直到关闭程序或用户点「清除已记住的密码」才清空，绝不写入任何文件。界面上用一条常驻说明把这件事讲清楚，不是不吭声地悄悄留着。
+- **危险操作第一次需要真正的视觉区分**：吊销设备用 `iced::widget::button::danger` 样式（之前的删除/覆盖类操作要么有 force 复选框保护、要么本来影响面很小，没到需要红色按钮的程度）；吊销成功后的提示照抄 CLI 的既有措辞——"已同步的历史明文数据不会被远程擦除，这是设计上的已知限制"（`08` #13），不是只说"吊销成功"就完事。
+- **共用一个"建 backend → 拿 identity → 列设备拿 recipients"的调用序列**：push provider/reencrypt/push 账号/会话同步这四个动作都要走这三步，直接照抄各自对应的 `commands.rs` 分支写在各自的 `perform` 闭包里，没有再抽一层公共 helper（闭包内联复用 vs 抽函数复用之间，鉴于每个动作的具体参数组合不完全一样、抽出来的公共部分本身只有三行，选择保持每个分支自包含、可读性优先）。
+- **会话同步从 Round 2 移到这轮**：`aam session sync` 早在 Phase 3b 就已经实现，Round 2 做会话面板时特意把它的图形化留到这一轮——不是因为逻辑上有依赖，是因为它跟这个屏幕的其余动作共用同一份连接状态，放两个屏幕反而要多传一份 webdav 连接参数。
+- **验收边界同前三轮**："本次会话记住密码"这条设计本身用起来顺不顺手，是这轮最需要用户亲自感受的部分，自动化测试没法替用户判断。
+- **Phase 4 至此全部完成**，四轮加起来把 `aam-cli` 现有全部子命令域都做成了对应的 GUI 屏幕；下一步 Phase 5（`iced_term` 内嵌终端）需要用户另外发起。

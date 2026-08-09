@@ -1,6 +1,6 @@
 # 05. 会话 / 项目 Memory-Bank 模块（Phase 3）
 
-> **Phase 3a 实现状态**：`aam-memory` crate + `aam project list/show/resume`、`aam session scan/adopt/approve-sync` 已落地（本地模型 + 跨工具发现/采集），细节见 `08` #9/#10/#17。**`aam session sync`（真正推到 WebDAV）与跨设备聚合视图尚未实现**，是 Phase 3b 的范围；`5.6` 的 CLI 表已按实际实现更新。
+> **实现状态（已全部完成）**：`aam-memory` crate + `aam project list/show/resume/link`、`aam session scan/adopt/approve-sync/sync` 全部已落地（本地模型、跨工具发现/采集、跨设备聚合视图、真正推到 WebDAV 的索引同步），细节见 `08` #8/#9/#10/#17。`aam session sync` 在 Phase 3b 落地，图形化版本（`crates/aam-gui/src/screens/sync.rs`）在 Phase 4 Round 4 补上——推迟到那一轮是因为它跟这个屏幕的其余动作（设备/Provider/账号同步）共用同一份 WebDAV 连接状态，不是因为逻辑本身有依赖。
 
 ## 5.1 起点：直接扩展今天已经在跑的 `project-tracker`
 

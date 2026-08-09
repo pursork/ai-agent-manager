@@ -110,6 +110,8 @@
 | `aam sync reencrypt --webdav-url <url> --webdav-user <user>` | `4.3` 步骤 6 的手动版：把本机已知的每个 Provider 配置用当前设备清单重新加密。已知限制：没有 PROPFIND 目录列举（`4.8`），只能覆盖本机本地已经注册过的 Provider id，见 `08` 待办事项。 |
 | `aam sync push/pull --webdav-url <url> --webdav-user <user> --provider <id>` | 推送/拉取单个 Provider 的配置+密钥。`push` 会在推送前重新读取远端当前版本号（而不是信任本地缓存的版本号）作为 `push_if_not_stale` 的基准；`pull` 不需要主密码，只需要本机已有的设备私钥。 |
 
+**Phase 4 Round 4（`aam-gui`，已实现）**：以上全部命令（连同 `4.10` 的账号 push/list/pull、`05` 的会话索引同步）在 GUI 里有对应的 Sync 屏（`crates/aam-gui/src/screens/sync.rs`）。CLI 每个子命令单独提示输入密码、不跨命令保留；GUI 是长驻窗口程序，同一个 Sync 屏下有十来个动作共享同一份连接，逐次重新弹密码框会很啰嗦——跟用户确认过的取舍是"本次 `aam-gui` 运行期间记住"：WebDAV 密码、vault 主密码填一次，本屏之后的动作直接复用，关闭程序或点「清除已记住的密码」才清空，不写入任何文件。这是明文在内存里停留时间变长换来的便利性，界面上用一条常驻说明 + 一个清除按钮把这件事讲清楚，不是隐藏起来的行为。
+
 所有命令都要求显式传入 `--webdav-url`/`--webdav-user`（`07` 已确认的设计：不做"记住上次 vault"的隐式状态）；WebDAV 密码与 vault 主密码均通过 `rpassword` 隐藏输入，不作为命令行参数传入（避免出现在 shell 历史/进程列表里）。
 
 ## 4.10 账号凭证同步（Claude/Codex 官方登录态）
