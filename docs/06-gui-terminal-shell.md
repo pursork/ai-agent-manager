@@ -77,3 +77,14 @@
 - **跨线程边界的一个真实坑**：`aam_switcher::Provider` trait 没有 `Send` 约束（也不必为了这一个用例去改这个已有 trait 的公开签名），所以不能在 GUI 主线程构造好 `Box<dyn Provider>` 再整体移进 `perform` 的后台线程闭包——会话面板的"生成摘要"改成把 `(ProviderRecord, api_key)`（纯 `Send` 数据）传进闭包，在闭包内部（已经在后台线程上）才用 `aam_switcher::build_provider` 现场构造，跟 `launch.rs` 的调用方式一致。
 - **`iced::Pixels` 只有 `From<f32>`/`From<u32>`，没有 `From<u16>`**：`style.rs` 的间距常量因此是 `f32` 不是 `u16`（第一次写成 `u16` 时编译器直接报错，不是猜出来的）。
 - **验收边界同 Round 1**：友好与否是主观判断，`cargo test` 只能保证逻辑正确、不崩溃，不能替用户点头——这轮结束后明确请用户自己跑一遍 `aam-gui.exe` 给实际反馈，不是自认为做完了就结束。
+
+## 6.9 Phase 4 Round 3 实现记录（已实现）
+
+`aam-skills` 的全量 CLI 能力（`09.8`）搬进 GUI，新增 `crates/aam-gui/src/screens/skills.rs`，延续 Round 2 定的用户友好性准则，不重新讨论、直接应用：
+
+- **信息分层**：已纳管 skill 只显示名字 + 小字路径 + 状态徽标（"git 仓库"/"已链接 Codex"/更新状态），完整台账字段（`shareTargets` 全量、`source`/`updateMode` 原始值）没有另开折叠区——比项目记录简单得多，直接显示够用，不需要 Round 2 项目卡片那种"详情"折叠（信息分层不等于"什么都要折叠"，字段本来就少时直接摊开反而更直接）。
+- **单一主操作，按行/整屏分层反馈**：未纳管 skill 每行的"纳管"、已纳管 skill 每行的"分享到 Codex"/"更新"是逐行动作，行内状态（`RowStatus::Working`/`Failed`）；"扫描"/"检查更新"/"全部自动更新"/内置 skill 安装是整屏批量动作，用共享状态栏——跟项目浏览器 vs 会话面板同一套按行/整屏的判断标准。
+- **人话提示**：`InstallOutcome` 的三种状态（`Installed`/`AlreadyUpToDate`/`Overwritten`）通过一个纯函数 `install_outcome_message` 映射成"已安装"/"已是最新，无需改动"/"已用最新内容覆盖"，不是把枚举变体名字直接打印出来；"更新"按钮是否可点由另一个纯函数 `update_button_state` 判断（本地来源不显示、git 来源但没查过显示"未知"、已是最新显示但不可点、有更新才可点）——两个函数都单测覆盖。
+- **联网动作要让用户知道**：从 git 引入新 skill 会真的执行 `git clone`，表单旁边直接写"会执行真实的 git clone，需要网络"，不是弹确认框（用户已经手填地址、手点按钮，这本身就是确认），但不能让这件事变成隐藏信息。
+- **一个真实的编译器坑**：`aam_skills::ManagedSkill` 没有 `#[derive(Clone)]`（此前没有调用方需要克隆它），而 `iced::Message` 要求整体 `Clone`。没有为了这一个 GUI 用例去放宽 `aam-skills` 那个公开类型的 derive——改成 GUI 侧自己的 `ManagedSkillRow`（`Clone`，字段是 `ManagedSkill` 的子集），`From<ManagedSkill>` 转换一次。跟 Round 2 处理 `Provider: !Send` 是同一种应对方式：GUI 端需要的额外能力（`Clone`/`Send`），优先在 GUI 自己的类型上满足，不去改下游库的公开签名。
+- **复用 `aam-cli` 的 search_dirs 逻辑**：`skills_search_dirs`（规范仓库本身 + Codex 目录 + 每个未链接的 Claude Profile）跟 `commands.rs::skills_search_dirs` 一字不差地对应，`aam-gui` 已经在 `app.rs` 里持有 `profiles` 列表，不需要新依赖。这个函数本身依赖真实文件系统（`resolves_to` 检查真实 reparse point），跟 CLI 那份一样没有单测——只测了"给定 profiles 列表，返回的 labels 集合对不对"这种不碰真实链接状态的部分。

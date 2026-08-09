@@ -105,6 +105,8 @@ aam skills update --all-auto                                   # 批量应用 up
 
 Phase 1 和 Phase 3 用同一个 `adopt` 子命令名，语义是渐进扩展（Phase 1 版本只处理"已经在规范位置、只是要不要多建几个链接"这个子集，Phase 3 版本补上"从非规范位置移动过来"和"从 git 引入"两条完整流程），不是两个不同命令，避免用户需要记两套命令名。
 
+**Phase 4 Round 3（`aam-gui`，已实现）**：以上全部子命令在 GUI 里都有对应的 Skills 屏（`crates/aam-gui/src/screens/skills.rs`），直接调用同一套 `aam-skills` 公开 API，没有另起一份逻辑——细节见 `06-gui-terminal-shell.md` §6.9。
+
 ## 9.10 附带 skill：`project-tracker`（已实现）
 
 `aam-memory` 直接读写 `project-tracker` 维护的 `project-index.json`（`05.1`、`08` #9），两者关系紧密到值得把 `project-tracker` 本身收作 aam 的**附带 skill**，随 aam 仓库一起维护——而不是让它继续作为用户自己那份、逐渐和 aam 的 schema 脱节的独立技能。
