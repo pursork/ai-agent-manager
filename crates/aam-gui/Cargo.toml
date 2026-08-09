@@ -15,6 +15,11 @@ path = "src/main.rs"
 # (wgpu + tiny-skia renderer, thread-pool executor) are all Phase 4 Round 1
 # needs -- no image/svg/canvas widgets used yet.
 iced = "0.14"
+# Embedded terminal widget (Phase 5, docs/06-gui-terminal-shell.md §6.1).
+# 0.8.0's own workspace deps pin `iced 0.14.0` -- confirmed via its
+# Cargo.toml before adding this, matches the version already in use
+# above, no iced version bump needed.
+iced_term = "0.8"
 aam-switcher = { path = "../aam-switcher" }
 aam-core = { path = "../aam-core" }
 aam-memory = { path = "../aam-memory" }

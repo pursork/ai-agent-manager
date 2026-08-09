@@ -11,9 +11,9 @@
 //! duration of the call.
 
 use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length, Task};
+use iced::{Element, Length, Subscription, Task};
 
-use crate::screens::{profiles, projects, providers, sessions, skills, sync};
+use crate::screens::{embedded_terminal, profiles, projects, providers, sessions, skills, sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -23,6 +23,7 @@ pub enum Screen {
     Sessions,
     Skills,
     Sync,
+    Terminal,
 }
 
 pub struct State {
@@ -33,6 +34,7 @@ pub struct State {
     sessions: sessions::State,
     skills: skills::State,
     sync: sync::State,
+    terminal: embedded_terminal::State,
     /// Whether `wt.exe` was found at startup -- checked once; the user
     /// would need to restart `aam-gui` after installing it anyway for a
     /// fresh PATH to take effect, so there's no point re-checking live.
@@ -51,6 +53,7 @@ impl Default for State {
             sessions: sessions::State::default(),
             skills: skills::State::default(),
             sync: sync::State::default(),
+            terminal: embedded_terminal::State::default(),
             wt_available: crate::terminal::wt_available(),
             wt_banner_dismissed: false,
             wt_install_status: None,
@@ -67,6 +70,7 @@ pub enum Message {
     Sessions(sessions::Message),
     Skills(skills::Message),
     Sync(sync::Message),
+    Terminal(embedded_terminal::Message),
     DismissWtBanner,
     InstallWindowsTerminal,
     WindowsTerminalInstallTriggered(Result<(), String>),
@@ -104,6 +108,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Skills(inner) => skills::update(&mut state.skills, inner, &state.profiles.profiles).map(Message::Skills),
         Message::Sync(inner) => sync::update(&mut state.sync, inner, &state.profiles.profiles).map(Message::Sync),
+        Message::Terminal(inner) => embedded_terminal::update(&mut state.terminal, inner).map(Message::Terminal),
         Message::DismissWtBanner => {
             state.wt_banner_dismissed = true;
             Task::none()
@@ -136,6 +141,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         button(text("Sessions")).on_press(Message::SwitchScreen(Screen::Sessions)),
         button(text("Skills")).on_press(Message::SwitchScreen(Screen::Skills)),
         button(text("Sync")).on_press(Message::SwitchScreen(Screen::Sync)),
+        button(text("Terminal")).on_press(Message::SwitchScreen(Screen::Terminal)),
     ]
     .spacing(8);
 
@@ -148,6 +154,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         Screen::Sessions => sessions::view(&state.sessions, &state.profiles.profiles).map(Message::Sessions),
         Screen::Skills => skills::view(&state.skills).map(Message::Skills),
         Screen::Sync => sync::view(&state.sync, &state.profiles.profiles, &state.providers.providers).map(Message::Sync),
+        Screen::Terminal => embedded_terminal::view(&state.terminal).map(Message::Terminal),
     };
 
     let mut content = column![tabs].spacing(8).width(Length::Fill).height(Length::Fill);
@@ -166,4 +173,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
     content = content.push(body);
 
     container(content).padding(8).into()
+}
+
+/// First real use of `iced`'s `Subscription` mechanism in this app --
+/// every prior screen only ever needed one-shot `Task`s (Phase 5 Round 1
+/// plan). Only the Terminal screen has a continuous event stream to
+/// listen to right now; later rounds (multi-tab) will aggregate more
+/// than one terminal's subscription here via `Subscription::batch`.
+pub fn subscription(state: &State) -> Subscription<Message> {
+    embedded_terminal::subscription(&state.terminal).map(Message::Terminal)
 }

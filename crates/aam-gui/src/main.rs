@@ -13,6 +13,7 @@ mod terminal;
 
 fn main() -> iced::Result {
     iced::application(app::new, app::update, app::view)
+        .subscription(app::subscription)
         .title("ai-agent-manager")
         .run()
 }
