@@ -99,3 +99,13 @@
 - **会话同步从 Round 2 移到这轮**：`aam session sync` 早在 Phase 3b 就已经实现，Round 2 做会话面板时特意把它的图形化留到这一轮——不是因为逻辑上有依赖，是因为它跟这个屏幕的其余动作共用同一份连接状态，放两个屏幕反而要多传一份 webdav 连接参数。
 - **验收边界同前三轮**："本次会话记住密码"这条设计本身用起来顺不顺手，是这轮最需要用户亲自感受的部分，自动化测试没法替用户判断。
 - **Phase 4 至此全部完成**，四轮加起来把 `aam-cli` 现有全部子命令域都做成了对应的 GUI 屏幕；下一步 Phase 5（`iced_term` 内嵌终端）需要用户另外发起。
+
+## 6.11 Phase 5 Round 1 实现记录（`iced_term` 核心接入验证）
+
+Phase 5 的第一轮，也是全项目第一次嵌入真实 PTY 渲染。按用户已确认的节奏，这轮只做一个固定的、不接业务逻辑的单标签终端，先把核心技术风险验证掉，不掺功能。
+
+- **依赖版本核实**（用 WebFetch 直接读源码，不是训练记忆）：`iced_term` `0.8.0`，其 `Cargo.toml` 的 `[workspace.dependencies]` 锁定 `iced 0.14.0`——跟 `aam-gui` 已用版本一致，零版本冲突。
+- **模块路径踩坑**：`Settings`/`BackendSettings` 实际在 `iced_term::settings::` 子模块下，不在 crate 根——README 示例里的 `iced_term::settings::Settings` 写法是对的，但容易被顺手简化成 `iced_term::Settings` 导致编译错误（`E0432`），第一次编译就撞上了，改成 `use iced_term::settings::{BackendSettings, Settings};` 后即通过。
+- **Windows 默认 `program` 是 `wsl.exe`**：`iced_term` 的 `BackendSettings::default()` 在 Windows 上默认拉起 WSL，不是 PowerShell——这个项目全程是纯 Windows/PowerShell 语境，必须显式覆盖 `program: "powershell.exe".to_string()`，跟 `terminal.rs`（Phase 4 外部窗口那套）的选型保持一致。
+- **本项目第一次用到 `iced::Subscription`**：前四轮全是一次性 `Task`（点一下、等结果），终端是持续事件流，`main.rs` 的 `iced::application(...)` 链新增了 `.subscription(app::subscription)`；`app::subscription` 目前只转发 Terminal 屏幕自己的 `term.subscription()`，多标签后会用 `Subscription::batch` 聚合多个。
+- **真实验证，不只是"没崩溃"**：这轮的核心功能没法用自动化点击工具验证（原生窗口，没有等价于 Chrome DevTools 的工具），但后台启动 `aam-gui.exe` 后用 `Win32_Process` 查了一次进程父子关系，**确认 `aam-gui.exe` 真的拉起了一个以它为父进程的真实 `powershell.exe` 子进程**（PTY 真的建立了，不只是编译通过）；`taskkill` 关掉 `aam-gui.exe` 后这个子进程也一并消失，没有留下孤儿进程。这比前四轮"启动不崩溃"的冒烟检查更进一步，但**依然不能证明键盘输入/渲染是否正确**——终端窗口里打字有没有反应、显示对不对，这部分只有人眼确认，需要用户自己打开 `aam-gui.exe` 点到 Terminal 标签页实际试一下。
