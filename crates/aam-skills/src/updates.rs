@@ -65,6 +65,14 @@ pub struct UpdateStatus {
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<String, UpdateError> {
     let output = Command::new("git")
+        // CI runners (and some locked-down corporate machines) can have
+        // the canonical skills dir owned by a different account than the
+        // one running `aam` -- git 2.35.2+'s "dubious ownership" guard
+        // would otherwise refuse every command here. These directories
+        // are aam-managed, not attacker-controlled, so trusting them
+        // unconditionally is safe.
+        .arg("-c")
+        .arg("safe.directory=*")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -205,7 +213,14 @@ mod tests {
     /// once up front by `git_available()`), so a bare `git` invocation
     /// here is fine to assume works.
     fn git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git").arg("-C").arg(dir).args(args).status().unwrap();
+        let status = Command::new("git")
+            .arg("-c")
+            .arg("safe.directory=*")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .unwrap();
         assert!(status.success(), "git {args:?} in {dir:?} failed");
     }
 
@@ -237,6 +252,8 @@ mod tests {
         let canonical_root = base.join("canonical");
         fs::create_dir_all(&canonical_root).unwrap();
         let clone_status = Command::new("git")
+            .arg("-c")
+            .arg("safe.directory=*")
             .args(["clone", "--quiet", "--branch", "main"])
             .arg(&upstream)
             .arg(canonical_root.join(name))
@@ -279,6 +296,8 @@ mod tests {
         // the already-cloned canonical directory falls behind.
         let second_clone = base.0.join("second-clone");
         let clone_status = Command::new("git")
+            .arg("-c")
+            .arg("safe.directory=*")
             .args(["clone", "--quiet"])
             .arg(&upstream)
             .arg(&second_clone)

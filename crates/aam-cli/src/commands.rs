@@ -241,6 +241,36 @@ fn resolve_provider(profile: &Profile) -> Result<Option<Box<dyn Provider>>, Box<
     Ok(Some(build_provider(&record, api_key)))
 }
 
+fn skills_index() -> aam_skills::SkillsIndex {
+    aam_skills::SkillsIndex::open_default()
+}
+
+/// Directories `aam skills scan`/`adopt` search for not-yet-adopted
+/// skills: the canonical store itself (pre-existing content never
+/// explicitly adopted into the index), Codex's own skills dir, and any
+/// Claude Profile whose `skills/` isn't already a link back to the
+/// canonical store (`aam-skills` has no `aam-switcher` dependency, so
+/// `aam-cli` -- which depends on both -- assembles this list, same
+/// pattern as `scan_all_profiles` for sessions).
+///
+/// A Profile whose `skills/` is already linked is deliberately excluded:
+/// reading through that link would just show canonical's own content a
+/// second time under a different label, one duplicate report per Profile.
+fn skills_search_dirs() -> Result<Vec<(String, PathBuf)>, Box<dyn Error>> {
+    let canonical = aam_skills::claude_personal_skills_dir();
+    let mut dirs = vec![
+        ("claude-canonical".to_string(), canonical.clone()),
+        ("codex".to_string(), aam_skills::codex_user_skills_dir()),
+    ];
+    for profile in profile_registry().list_for_tool(Tool::Claude)? {
+        let profile_skills_dir = profile.config_dir.join("skills");
+        if !aam_skills::resolves_to(&profile_skills_dir, &canonical) {
+            dirs.push((format!("claude:{}", profile.label), profile_skills_dir));
+        }
+    }
+    Ok(dirs)
+}
+
 fn run_skills(action: SkillsAction) -> Result<(), Box<dyn Error>> {
     match action {
         SkillsAction::List => {
@@ -279,28 +309,73 @@ fn run_skills(action: SkillsAction) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
-        SkillsAction::Adopt { name, share_with } => {
-            for target in share_with.split(',').map(str::trim) {
-                match target {
-                    "codex" => {
-                        let extra_keys = aam_skills::share_skill_with_codex(&name)?;
-                        if extra_keys.is_empty() {
-                            println!("linked '{name}' into Codex's $HOME/.agents/skills");
-                        } else {
-                            println!(
-                                "linked '{name}' into Codex's $HOME/.agents/skills (warning: uses \
-                                 non-standard frontmatter fields [{}], Codex may not understand them \
-                                 -- docs/09-skills-management.md §9.1)",
-                                extra_keys.join(", ")
-                            );
+        SkillsAction::Scan => {
+            let index = skills_index();
+            let known_names: Vec<String> = index.list()?.into_iter().map(|s| s.name).collect();
+            let canonical = aam_skills::claude_personal_skills_dir();
+            let search_dirs = skills_search_dirs()?;
+            let found = aam_skills::scan_unmanaged_skills(&known_names, &canonical, &search_dirs)?;
+            if found.is_empty() {
+                println!("(nothing new found -- everything visible is already adopted)");
+            }
+            for s in found {
+                println!("{:<24} at {:<10} {}", s.name, s.location, s.path.display());
+            }
+            Ok(())
+        }
+
+        SkillsAction::Adopt {
+            name,
+            share_with,
+            source,
+            update_mode,
+        } => {
+            let index = skills_index();
+            match source {
+                Some(spec) => {
+                    let (url, git_ref) = aam_skills::parse_source_spec(&spec);
+                    aam_skills::adopt_from_git(&index, &name, &url, git_ref.as_deref(), &update_mode)?;
+                    println!(
+                        "cloned '{name}' from {url}{} into {}",
+                        git_ref.map(|r| format!("@{r}")).unwrap_or_default(),
+                        aam_skills::claude_personal_skills_dir().join(&name).display()
+                    );
+                }
+                None => {
+                    let search_dirs = skills_search_dirs()?;
+                    aam_skills::adopt_local_skill(&index, &name, &search_dirs)?;
+                    println!(
+                        "'{name}' is now adopted at {}",
+                        aam_skills::claude_personal_skills_dir().join(&name).display()
+                    );
+                }
+            }
+
+            if let Some(share_with) = share_with {
+                for target in share_with.split(',').map(str::trim) {
+                    match target {
+                        "codex" => {
+                            let extra_keys = aam_skills::share_skill_with_codex(&name)?;
+                            index.record_share_target(&name, "codex")?;
+                            if extra_keys.is_empty() {
+                                println!("linked '{name}' into Codex's $HOME/.agents/skills");
+                            } else {
+                                println!(
+                                    "linked '{name}' into Codex's $HOME/.agents/skills (warning: uses \
+                                     non-standard frontmatter fields [{}], Codex may not understand them \
+                                     -- docs/09-skills-management.md §9.1)",
+                                    extra_keys.join(", ")
+                                );
+                            }
                         }
-                    }
-                    other => {
-                        return Err(format!(
-                            "unsupported --share-with target '{other}' (Phase 1 only supports \
-                             'codex'; per-Profile Claude sharing lands in Phase 3)"
-                        )
-                        .into());
+                        other => {
+                            return Err(format!(
+                                "unsupported --share-with target '{other}' (only 'codex' is \
+                                 supported -- every Claude Profile already sees canonical skills \
+                                 automatically via its own skills/ link)"
+                            )
+                            .into());
+                        }
                     }
                 }
             }
@@ -332,7 +407,59 @@ fn run_skills(action: SkillsAction) -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
+
+        SkillsAction::CheckUpdates => {
+            let statuses = aam_skills::check_updates(&skills_index())?;
+            if statuses.is_empty() {
+                println!("(no git-sourced skills tracked -- nothing to check)");
+            }
+            for s in statuses {
+                let note = if s.up_to_date {
+                    "up to date".to_string()
+                } else {
+                    format!("update available ({} -> {})", short_hash(&s.local_commit), short_hash(&s.upstream_commit))
+                };
+                println!("{:<24} {}", s.name, note);
+            }
+            Ok(())
+        }
+
+        SkillsAction::Update { name, all_auto } => {
+            let index = skills_index();
+            match (name, all_auto) {
+                (Some(_), true) => {
+                    Err("specify either a skill name or --all-auto, not both".into())
+                }
+                (Some(name), false) => {
+                    aam_skills::update_skill(&index, &name)?;
+                    println!("'{name}' updated to its upstream HEAD");
+                    Ok(())
+                }
+                (None, true) => {
+                    let outcomes = aam_skills::update_all_auto(&index)?;
+                    if outcomes.is_empty() {
+                        println!("(no skills with update-mode 'auto' -- nothing to update)");
+                    }
+                    for (name, result) in outcomes {
+                        match result {
+                            Ok(()) => println!("{name:<24} updated"),
+                            Err(e) => println!("{name:<24} FAILED: {e}"),
+                        }
+                    }
+                    Ok(())
+                }
+                (None, false) => Err("specify a skill name, or --all-auto to update every \
+                                       auto-update-mode skill"
+                    .into()),
+            }
+        }
     }
+}
+
+/// Short-form commit hash for `check-updates` output -- readability only,
+/// git itself always compares the full hash.
+fn short_hash(hash: &str) -> &str {
+    &hash[..hash.len().min(8)]
 }
 
 /// Local per-machine state for `aam-sync` (this device's age identity) --

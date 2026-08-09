@@ -146,15 +146,33 @@ pub enum SkillsAction {
     List,
     /// Shows link/git status for the canonical store and each skill.
     Status,
-    /// Shares an already-canonical skill with Codex (and/or other Claude
-    /// Profiles) by Junction/symlink. Phase 1 subset: only skills already
-    /// at `~/.claude/skills/<name>` (no scan/adopt-from-elsewhere yet,
-    /// that's Phase 3).
+    /// Finds skill directories not yet tracked in `aam`'s skills index
+    /// (`docs/09-skills-management.md` §9.6): the canonical store itself
+    /// (pre-existing skills never adopted), Codex's own skills dir, and
+    /// any Claude Profile whose `skills/` isn't already linked back to
+    /// the canonical store. Read-only -- run `adopt` on what it reports.
+    Scan,
+    /// Brings a skill under `aam`'s management. Two forms:
+    /// - `aam skills adopt <name>` -- moves an already-discovered (via
+    ///   `scan`) local directory into the canonical store and links its
+    ///   old location back (or, if it's already at the canonical
+    ///   location, just records it in the index).
+    /// - `aam skills adopt <name> --source <git-url>[@ref]` -- clones a
+    ///   new skill from git straight into the canonical store.
     Adopt {
         name: String,
-        /// Comma-separated targets. Phase 1 supports `codex`.
+        /// Comma-separated share targets, applied after adopting.
+        /// Currently supports `codex`.
         #[arg(long = "share-with")]
-        share_with: String,
+        share_with: Option<String>,
+        /// `<git-url>[@ref]` -- adopt by cloning from git instead of
+        /// moving an existing local directory.
+        #[arg(long)]
+        source: Option<String>,
+        /// `manual` (default) or `auto` -- only meaningful with
+        /// `--source`; controls whether `update --all-auto` includes it.
+        #[arg(long = "update-mode", default_value = "manual")]
+        update_mode: String,
     },
     /// Installs a skill shipped with `aam` itself (e.g. `project-tracker`)
     /// into `~/.claude/skills/<name>`. Refuses to overwrite an existing,
@@ -166,6 +184,18 @@ pub enum SkillsAction {
         name: Option<String>,
         #[arg(long)]
         force: bool,
+    },
+    /// Checks git-sourced skills (`adopt --source`) against their
+    /// upstream for updates (`docs/09-skills-management.md` §9.7).
+    CheckUpdates,
+    /// Applies an upstream update to a git-sourced skill (`git reset
+    /// --hard @{upstream}` -- these directories are pristine upstream
+    /// mirrors, not meant to be locally edited), or with `--all-auto`,
+    /// to every skill adopted with `--update-mode auto`.
+    Update {
+        name: Option<String>,
+        #[arg(long = "all-auto", default_value_t = false)]
+        all_auto: bool,
     },
 }
 

@@ -20,8 +20,8 @@ mod paths;
 mod updates;
 
 pub use adopt::{
-    adopt_from_git, adopt_from_git_at, adopt_local_skill, adopt_local_skill_at, AdoptError, AdoptMoveError,
-    AdoptSkillMove,
+    adopt_from_git, adopt_from_git_at, adopt_local_skill, adopt_local_skill_at, parse_source_spec, AdoptError,
+    AdoptMoveError, AdoptSkillMove,
 };
 pub use bundled::{find_bundled_skill, BundledSkill, BUNDLED_SKILLS};
 pub use discover::{scan_unmanaged_skills, DiscoveredSkill};

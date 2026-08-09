@@ -263,6 +263,10 @@ pub fn adopt_from_git_at(
     }
 
     let mut cmd = std::process::Command::new("git");
+    // See updates.rs's `run_git` for why: avoids git's "dubious
+    // ownership" guard tripping when the canonical skills dir's owner
+    // doesn't match the running account (observed on CI runners).
+    cmd.arg("-c").arg("safe.directory=*");
     cmd.arg("clone").arg("--depth").arg("1").arg("--quiet");
     if let Some(r) = git_ref {
         cmd.arg("--branch").arg(r);
@@ -304,6 +308,20 @@ pub fn adopt_from_git(
     update_mode: &str,
 ) -> Result<(), AdoptError> {
     adopt_from_git_at(&claude_personal_skills_dir(), index, name, url, git_ref, update_mode)
+}
+
+/// Splits `--source`'s `<url>[@ref]` syntax (`09.5`). Uses the *last* `@`
+/// and only treats what follows it as a ref if that part contains neither
+/// `/` nor `:` -- SSH-style URLs (`git@github.com:user/repo.git`) already
+/// have an `@` in the host, and naively splitting on the first `@` would
+/// mistake `github.com:user/repo.git` for a ref name.
+pub fn parse_source_spec(spec: &str) -> (String, Option<String>) {
+    if let Some((url, git_ref)) = spec.rsplit_once('@') {
+        if !git_ref.is_empty() && !git_ref.contains('/') && !git_ref.contains(':') {
+            return (url.to_string(), Some(git_ref.to_string()));
+        }
+    }
+    (spec.to_string(), None)
 }
 
 #[cfg(test)]
@@ -442,5 +460,41 @@ mod tests {
         let index = SkillsIndex::open(base.0.join(".aam-skills-index.json"));
         let err = adopt_local_skill_at(&base.0.join("canonical"), &index, "ghost", &[]).unwrap_err();
         assert!(matches!(err, AdoptError::NotFound(_)));
+    }
+
+    #[test]
+    fn parse_source_spec_plain_url_has_no_ref() {
+        assert_eq!(
+            parse_source_spec("https://github.com/user/repo.git"),
+            ("https://github.com/user/repo.git".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn parse_source_spec_splits_off_a_trailing_ref() {
+        assert_eq!(
+            parse_source_spec("https://github.com/user/repo.git@v1.2.3"),
+            ("https://github.com/user/repo.git".to_string(), Some("v1.2.3".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_source_spec_does_not_mistake_an_ssh_host_for_a_ref() {
+        // `git@github.com:user/repo.git` has an `@` in the host, not
+        // separating a ref -- the part after the last `@` here is
+        // `github.com:user/repo.git`, which contains both `/` and `:`,
+        // so it must be treated as (no ref), not misparsed.
+        assert_eq!(
+            parse_source_spec("git@github.com:user/repo.git"),
+            ("git@github.com:user/repo.git".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn parse_source_spec_ssh_url_with_explicit_ref_still_splits_correctly() {
+        assert_eq!(
+            parse_source_spec("git@github.com:user/repo.git@main"),
+            ("git@github.com:user/repo.git".to_string(), Some("main".to_string()))
+        );
     }
 }
