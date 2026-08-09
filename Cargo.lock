@@ -43,6 +43,8 @@ name = "aam-skills"
 version = "0.1.0"
 dependencies = [
  "aam-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
