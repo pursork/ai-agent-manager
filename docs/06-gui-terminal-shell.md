@@ -109,3 +109,13 @@ Phase 5 的第一轮，也是全项目第一次嵌入真实 PTY 渲染。按用�
 - **Windows 默认 `program` 是 `wsl.exe`**：`iced_term` 的 `BackendSettings::default()` 在 Windows 上默认拉起 WSL，不是 PowerShell——这个项目全程是纯 Windows/PowerShell 语境，必须显式覆盖 `program: "powershell.exe".to_string()`，跟 `terminal.rs`（Phase 4 外部窗口那套）的选型保持一致。
 - **本项目第一次用到 `iced::Subscription`**：前四轮全是一次性 `Task`（点一下、等结果），终端是持续事件流，`main.rs` 的 `iced::application(...)` 链新增了 `.subscription(app::subscription)`；`app::subscription` 目前只转发 Terminal 屏幕自己的 `term.subscription()`，多标签后会用 `Subscription::batch` 聚合多个。
 - **真实验证，不只是"没崩溃"**：这轮的核心功能没法用自动化点击工具验证（原生窗口，没有等价于 Chrome DevTools 的工具），但后台启动 `aam-gui.exe` 后用 `Win32_Process` 查了一次进程父子关系，**确认 `aam-gui.exe` 真的拉起了一个以它为父进程的真实 `powershell.exe` 子进程**（PTY 真的建立了，不只是编译通过）；`taskkill` 关掉 `aam-gui.exe` 后这个子进程也一并消失，没有留下孤儿进程。这比前四轮"启动不崩溃"的冒烟检查更进一步，但**依然不能证明键盘输入/渲染是否正确**——终端窗口里打字有没有反应、显示对不对，这部分只有人眼确认，需要用户自己打开 `aam-gui.exe` 点到 Terminal 标签页实际试一下。
+
+## 6.12 Phase 5 Round 2 实现记录（多标签 + 接续/打开终端接入内嵌标签页）
+
+这轮是在用户明确表示"Round 1 还没来得及试"的情况下继续推进的——已经把这个风险跟用户说清楚，用户选择接受。做完后的验收请求会把"Round 1 单标签能不能打字"和"这轮的多标签好不好用"合并成一次，不假装这是两件独立的事。
+
+- **不移除外部窗口方案，新增内嵌选项**：Profiles"打开终端"/Projects"接续"旁边各加一个"（内嵌）"按钮，两条路径并存。`crate::terminal::powershell_args`（Phase 4 外部窗口方案已有的命令行拼接纯函数）改成 `pub`，内嵌标签页的 `BackendSettings.args` 直接复用它，不重写一份。
+- **跨屏幕状态的处理方式**：`profiles::Message::OpenEmbedded`/`projects::Message::ResumeEmbedded` 这两个新消息变体，各自屏幕的 `update` 里只有一个"什么都不做"的兜底分支（保持 `match` 穷尽性检查通过），真正的逻辑在 `app::update` 顶层拦截处理——因为打开内嵌标签页需要改 `state.terminal`，这是兄弟屏幕的状态，`profiles.rs`/`projects.rs` 自己没有访问权限。`projects.rs` 的 `resumable`/`record_tool`/`resume_command` 三个函数改成 `pub(crate)`，被 `app.rs` 直接复用，跟外部窗口路径共用同一套"能不能接续"判断和命令行构造，不是重新写一遍容易跟外部窗口路径慢慢分叉的逻辑。
+- **一个真实的类型系统坑**：`style.rs` 的 `primary_button`/`secondary_button` 原来接收 `&'a str`，标签栏里每个标签的文字是循环内 `format!` 出来的临时 `String`（比如给当前激活的标签加一个"▶ "前缀），借用生命周期不够长，编译不过。改成 `impl iced::advanced::text::IntoFragment<'a>`——这个 trait 对 `&'a str`、`&'a String`、**拥有所有权的 `String`** 都有实现（`iced_core::text::IntoFragment` 源码确认过），换成这个之后字符串字面量和临时拼出来的 `String` 都能直接传，不需要额外中转。
+- **测试策略延续 `aam-skills` 的真实-`git`测试先例**：`open_tab`/`close_tab`（id 分配、关闭标签后 active 该落到哪个标签）的单测**真的会起 `powershell.exe` PTY**（3 个测试共起 6 个真实进程），不是 mock——跟真实 `git` 测试同一个理由：本机永远有的程序、纯本地操作、不涉及网络/凭据，没必要为了"避免起真实进程"单独抽一层可以注入假货的接口。
+- **验收边界**：跟 Round 1 一样，这轮加的多标签切换/关闭顺不顺手、内嵌打开的终端标题/工作目录/环境变量对不对，都需要用户实际点。
