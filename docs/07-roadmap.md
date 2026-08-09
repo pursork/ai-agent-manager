@@ -60,14 +60,20 @@
 - `aam skills install-bundled [name] [--force]`：物化安装，默认不覆盖冲突内容，不碰 `settings.json` 的 hook 注册（那一步仍是手动的，`SKILL.md` 里有说明）。
 - `aam whoami --tool <claude|codex>`：新的只读诊断命令，收编后的脚本靠它正确填 `deviceId`/`profileLabel`（`09.10`）。
 
-### Phase 3b — 跨设备聚合 + WebDAV 同步（待立项）
+### Phase 3b — 跨设备聚合 + WebDAV 同步（已完成）
 
-- `aam-memory` 索引通过 `aam-sync` 同步的跨设备版本；`aam-cli` 的 `project list/show/resume` 升级为真正的跨设备聚合视图。
+- `aam-memory` 索引通过 `aam-sync` 同步的跨设备版本（共享 blob 多写者合并语义：拉取→过滤掉自己设备的旧记录→追加自己当前的记录→推送，`sync.rs`）；`aam-cli` 的 `project list/show` 拼接本机 + 镜像索引，成为跨设备聚合视图。
 - `aam session sync`：只推 `syncApproved=true` 的条目。
-- 项目跨设备逻辑身份（`projectId`，见 `08` #8）、`Provider::complete()` 通用文本补全能力（`08` #17，`--summarize` 的前置依赖）在本子阶段立项时一并定案。
-- **`aam-skills` 的 Phase 3 子集**（`09.6`、`09.7`）：`aam skills scan`（跨 `~/.claude/skills`/`$HOME/.agents/skills`/各 Profile 的只读发现）、完整版 `aam skills adopt`（含从非规范位置移动内容）、来源追踪与 `check-updates`/`update`（GitHub 来源 skill 的手动更新检查，默认不自动应用）。
 
-**验收标准**：覆盖验收场景第 7-12 步中"记得住做到哪了"的部分——在设备 B 上执行 `aam project resume X`，能看到"上次在设备 A，Claude 官方账号2，一句话状态：...”，且给出正确的下一步操作提示（本地无该目录时的提示文案符合 `05.3`）；另外验证"扫描出的历史会话/skills 默认不出本机，需要显式批准/adopt 才会离开本机"这条本轮新增的核心约束。
+### Phase 3 补完 — 完善收尾（已完成）
+
+按顺序补完的四块中的三块（第四块——`aam` 接管 Claude Code hook 实时注册——明确排除在"完善 Phase 3"范围之外，独立留给 Phase 4 之后立项，见 `08` #18）：
+
+- **跨设备 resume 兜底 + `projectId` 手动关联**（`08` #8）：`aam project resume` 在本机路径不存在时，改为在本机+镜像索引里找同名记录，给出"本机未找到目录（上次在设备 X）"的兜底提示，不再假设路径永远有效；`aam project link <path-a> <path-b>` 显式给两条记录关联同一个跨设备逻辑身份。
+- **`Provider::complete()` + `--summarize`**（`08` #17）：`Provider` trait 加了通用的"文本补全"能力（Anthropic Messages API，协议选择过程见 `08` #17），`aam session adopt --summarize --profile <label>` 用它给采集到的会话生成一句话摘要。
+- **`aam-skills` 的 Phase 3 子集**（`09.5`-`09.8`）：本机台账 `.aam-skills-index.json`、`aam skills scan`（跨规范仓库本身/`$HOME/.agents/skills`/各未链接 Profile 的只读发现）、完整版 `aam skills adopt`（含从非规范位置移动内容、`--source <git-url>[@ref]` 从 git 引入新 skill）、`check-updates`/`update`/`update --all-auto`（GitHub 来源 skill 的更新检查与应用，默认手动触发）。
+
+**验收标准**：覆盖验收场景第 7-12 步中"记得住做到哪了"的部分——在设备 B 上执行 `aam project resume X`，能看到"上次在设备 A，Claude 官方账号2，一句话状态：...”，且给出正确的下一步操作提示（本地无该目录时的提示文案符合 `05.3`）；验证"扫描出的历史会话/skills 默认不出本机，需要显式批准/adopt 才会离开本机"这条核心约束；`aam-skills` 的 scan/adopt/check-updates/update 流程用真实本地 git 仓库端到端验证过（克隆、检测更新、`--all-auto` 应用、scan 与已链接 Profile 的去重）。**Phase 3 至此全部完成，下一步是 Phase 4。**
 
 ---
 

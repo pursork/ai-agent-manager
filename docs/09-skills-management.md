@@ -40,24 +40,22 @@ Claude Code 和 Codex CLI 都支持"Skills"——文件系统里的一个目录�
 
 Windows 上"符号链接"（`mklink /D`，或 `CreateSymbolicLink` API）默认需要管理员权限或开启"开发者模式"；**Junction**（`mklink /J`）不需要这些权限，只是限制在同一本地卷内、且只能指向目录（不能指向文件）。鉴于本项目 Phase 0 已经在"需要管理员权限"这件事上吃过亏（VS Build Tools 安装那次），Windows 平台**默认用 Junction**，不要求用户开启开发者模式或提权；Unix 平台用普通符号链接。这一点在 `aam-skills` 的 Windows/Unix 双实现里要分开处理，不能假设一套 API 两边通用。
 
-## 9.5 数据模型
+## 9.5 数据模型（已实现，`crates/aam-skills/src/index.rs`）
 
-`aam-skills` 维护一份本机 skills 台账（暂定 `~/.claude/skills/.aam-skills-index.json`，和规范仓库放一起，方便肉眼查看）：
+`aam-skills` 维护一份本机 skills 台账，`~/.claude/skills/.aam-skills-index.json`，和规范仓库放一起，方便肉眼查看：
 
 ```json
 {
   "skills": [
     {
       "name": "pdf-processing",
-      "canonicalPath": "~/.claude/skills/pdf-processing",
       "managed": true,
-      "shareTargets": ["codex", "claude:官方账号2"],
+      "shareTargets": ["codex"],
       "source": "local",
       "updateMode": "manual"
     },
     {
       "name": "some-community-skill",
-      "canonicalPath": "~/.claude/skills/some-community-skill",
       "managed": true,
       "shareTargets": [],
       "source": "https://github.com/example/skill-repo@main",
@@ -68,40 +66,44 @@ Windows 上"符号链接"（`mklink /D`，或 `CreateSymbolicLink` API）默认�
 ```
 
 - `managed`：是否被 `aam-skills` 纳管（区分"发现了但用户还没 adopt"的 skill，见 9.6）。
-- `shareTargets`：这个 skill 当前被显式共享到了哪些位置（Codex / 哪个 Claude Profile）。
+- `shareTargets`：这个 skill 当前被显式共享到了哪些位置。**实现落地时只有 `"codex"`**：Claude Profile 不需要单独的 share target 记录，因为每个 Profile 的 `skills/` 目录本身就是指向规范仓库的链接（`03.7`），一建 Profile 就自动看到规范仓库的全部内容，没有"显式共享到某个 Claude Profile"这个动作可记。原设计草稿里的 `claude:<profile>` 目标未实现。
 - `source`：`"local"`（本机原创，不追踪更新）或 `"<git url>[@ref]"`（有上游可对比，见 9.7）。
 - `updateMode`：`"manual"`（默认）或 `"auto"`——是否自动应用检测到的上游更新，和本项目其余"默认关闭、显式开启"的原则保持一致（`04.7`、`05.4` 都是同样的态度），不为这一项破例。
+- 原设计草稿里的 `canonicalPath` 字段未实现：规范路径永远是 `<canonical_root>/<name>`，可推导，存进台账只会多一份可能过期的冗余数据。
 
-## 9.6 扫描发现与纳管（`aam skills scan` / `aam skills adopt`）——两段式，Phase 3
+## 9.6 扫描发现与纳管（`aam skills scan` / `aam skills adopt`）——已实现
 
 和 `05.7`-`05.9` 的会话发现完全对称的 UX：
 
-1. `aam skills scan`：只读，扫描 `~/.claude/skills`、`$HOME/.agents/skills`、每个已注册 Claude Profile 目录下的 `skills/`（排除已经是指向规范位置的链接的项，那些已经在纳管中），打印一份"发现 N 个未纳管 skill"的清单。**不写任何台账，不建任何链接。**
-2. `aam skills adopt <name> [--share-with codex[,claude:<profile>]]`：把某个发现到的 skill 正式纳入台账（`managed: true`），如果它当前物理位置不是规范位置（比如是在某个 Codex 专用目录里原创的），先把内容**移动**到 `~/.claude/skills/<name>`（用 `TransactionalOp`：快照原位置→移动→在原位置建回链接→验证→失败回滚），再按 `--share-with` 建立其余位置的链接。
+1. `aam skills scan`：只读，扫描规范仓库本身（找物理上已经在那儿、但从没被 adopt 过、因此不在台账里的 skill——典型情况是这个索引文件出现之前就已经存在的 skill）、`$HOME/.agents/skills`（Codex）、每个已注册 Claude Profile 的 `skills/` 子目录（**仅当该目录还不是指向规范仓库的链接时才扫描**——已经链接的 Profile 读到的就是规范仓库自己的内容，再扫一遍只会对着同一批 skill 重复报告，`aam-cli::skills_search_dirs` 负责这个过滤）。排除任何已经是指向规范位置链接的项。打印一份"发现 N 个未纳管 skill"的清单，**不写任何台账，不建任何链接**（`crates/aam-skills/src/discover.rs`）。
+2. `aam skills adopt <name> [--share-with codex]`：把某个发现到的 skill 正式纳入台账（`managed: true`）。如果它当前物理位置就是规范位置，只做记账；否则先把内容**移动**到 `~/.claude/skills/<name>`（`AdoptSkillMove`，一个 `TransactionalOp`：快照原位置→`fs::rename`→在原位置建回链接→验证→失败整体回滚），再按 `--share-with` 建立其余位置的链接（`crates/aam-skills/src/adopt.rs`）。只处理同一卷内的移动，跨卷场景直接报错提示手动搬。
+   - `aam skills adopt <name> --source <git-url>[@ref] [--update-mode manual|auto]`：不是"本机搬家"，是直接 `git clone --depth 1 [--branch <ref>] <url> <规范位置>/<name>` 引入一个新 skill；克隆后要求仓库根目录直接有 `SKILL.md`（不支持"skill 是仓库里的某个子目录"这种嵌套形态，`09.7` 的非目标声明已经排除了这类更复杂的场景）。`<url>[@ref]` 由 `parse_source_spec` 解析——用最后一个 `@` 切分，且只有当 `@` 后面的部分既不含 `/` 也不含 `:` 时才当作 ref，避免把 `git@github.com:user/repo.git` 这种 SSH 形式的主机名部分误判成 ref。
    - `--share-with codex` 时，先解析目标 skill 的 `SKILL.md` frontmatter，如果发现非 `name`/`description` 的额外字段（大概率是 Claude 专属扩展），打印警告"该 skill 使用了 Claude 专属字段，Codex 不保证正确识别"，但不阻止操作（用户知情后仍可坚持）。
 
-## 9.7 GitHub 来源的更新检查（`aam skills check-updates` / `aam skills update`）——Phase 3
+## 9.7 GitHub 来源的更新检查（`aam skills check-updates` / `aam skills update`）——已实现
 
-只对 `source` 不是 `"local"` 的 skill 生效：
+只对 `source` 不是 `"local"` 的 skill 生效（`crates/aam-skills/src/updates.rs`）。因为 `adopt --source` 本身就是真 `git clone`，规范位置那个 skill 目录本身就是个 git 工作区——不需要另外维护"上次已知的上游 commit"这类状态，直接问 git：
 
-- `check-updates`：对每个有 `source` 记录的 skill 做一次 `git fetch`（源仓库通常比 skill 目录大，只 fetch 不 clone 全部工作区；如果 skill 只是源仓库里的一个子目录，用 sparse-checkout 或者干脆把整个源仓库克隆到一个缓存目录、规范位置只保留需要的子目录内容），比较本地内容 hash 和上游最新版本，列出"有更新可用"的 skill。
-- `update <name>`：对指定 skill 应用上游最新内容——**默认必须显式调用这个命令才会真的改动本机文件**（`updateMode: manual`）；如果用户为某个 skill 单独或全局设置了 `updateMode: auto`，`aam` 可以在其他命令执行的间隙顺带做一次静默更新，但这是可选加强项，不是默认行为。
+- `check-updates`：对每个 `source` 记录的 skill 目录做 `git fetch --quiet`，比较 `HEAD` 和 `@{upstream}`，不一样就是"有更新"。（原设计草稿设想的"整仓库克隆到缓存目录、规范位置只保留子目录"的 sparse-checkout 优化未实现——`adopt --source` 落地时直接要求 SKILL.md 在仓库根目录，绕开了这个复杂度；子目录形态的 skill 仓库仍然是 `08` 记录的非阻塞后续优化项。）
+- `update <name>`：`fetch` 后 `git reset --hard @{upstream}`——这些目录被设计成上游的干净镜像，不假设用户会在里面手动改东西，所以直接对齐上游，不做合并。
+- `update --all-auto`：批量对每个 `updateMode: auto` 的 skill 应用上面的更新，仍然是用户显式敲的命令，不是后台定时任务（和 `04.7`/`05.4` 一样的"默认关闭、显式触发"原则）。单个 skill 更新失败不影响其余 skill。
 - 这不是一个真正的包管理器：不做依赖解析、不做语义化版本比较，只是"diff 一下、提示一下、需要的话手动应用"，符合 `00` 里"不重新发明 npm/cargo"的 Non-Goal 声明。
 
-## 9.8 CLI 交付形态
+## 9.8 CLI 交付形态（已实现）
 
 ```
-aam skills list                                  # 列出已纳管 skill 及其链接目标（Phase 1）
-aam skills status                                # 检测规范仓库/各链接目标状态是否健康，git 仓库则提示自行同步（Phase 1）
-aam skills adopt <name> --share-with <targets>   # 显式跨工具/跨 Profile 共享（Phase 1，仅限已在规范位置的 skill）
-aam skills install-bundled [name] [--force]      # 安装 aam 自带的 skill（已实现，见 9.10）
-aam skills scan                                  # 发现本机未纳管 skill（Phase 3）
-aam skills adopt <name> [--share-with <targets>] # 完整纳管流程，含移动到规范位置（Phase 3 扩展 9.6）
-aam skills check-updates                         # 检查 GitHub 来源 skill 是否有更新（Phase 3）
-aam skills update <name>                         # 应用更新（Phase 3）
+aam skills list                                              # 列出已纳管 skill 及其链接目标
+aam skills status                                            # 检测规范仓库/各链接目标状态是否健康，git 仓库则提示自行同步
+aam skills scan                                               # 发现本机未纳管 skill
+aam skills adopt <name> [--share-with codex]                 # 纳管一个已发现的本机 skill（含移动到规范位置）
+aam skills adopt <name> --source <git-url>[@ref]              #   [--update-mode manual|auto] -- 从 git 引入新 skill
+aam skills install-bundled [name] [--force]                   # 安装 aam 自带的 skill（见 9.10）
+aam skills check-updates                                       # 检查 git 来源 skill 是否有更新
+aam skills update <name>                                       # 应用指定 skill 的更新
+aam skills update --all-auto                                   # 批量应用 updateMode:auto 的 skill 更新
 ```
 
-Phase 1 和 Phase 3 用同一个 `adopt` 子命令名，语义是渐进扩展（Phase 1 版本只处理"已经在规范位置、只是要不要多建几个链接"这个子集，Phase 3 版本补上"从非规范位置移动过来"的完整流程），不是两个不同命令，避免用户需要记两套命令名。
+Phase 1 和 Phase 3 用同一个 `adopt` 子命令名，语义是渐进扩展（Phase 1 版本只处理"已经在规范位置、只是要不要多建几个链接"这个子集，Phase 3 版本补上"从非规范位置移动过来"和"从 git 引入"两条完整流程），不是两个不同命令，避免用户需要记两套命令名。
 
 ## 9.10 附带 skill：`project-tracker`（已实现）
 
