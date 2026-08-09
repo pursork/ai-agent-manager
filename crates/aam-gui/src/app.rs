@@ -13,7 +13,7 @@
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Task};
 
-use crate::screens::{profiles, projects, providers, sessions};
+use crate::screens::{profiles, projects, providers, sessions, skills};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -21,6 +21,7 @@ pub enum Screen {
     Providers,
     Projects,
     Sessions,
+    Skills,
 }
 
 pub struct State {
@@ -29,6 +30,7 @@ pub struct State {
     providers: providers::State,
     projects: projects::State,
     sessions: sessions::State,
+    skills: skills::State,
     /// Whether `wt.exe` was found at startup -- checked once; the user
     /// would need to restart `aam-gui` after installing it anyway for a
     /// fresh PATH to take effect, so there's no point re-checking live.
@@ -45,6 +47,7 @@ impl Default for State {
             providers: providers::State::default(),
             projects: projects::State::default(),
             sessions: sessions::State::default(),
+            skills: skills::State::default(),
             wt_available: crate::terminal::wt_available(),
             wt_banner_dismissed: false,
             wt_install_status: None,
@@ -59,6 +62,7 @@ pub enum Message {
     Providers(providers::Message),
     Projects(projects::Message),
     Sessions(sessions::Message),
+    Skills(skills::Message),
     DismissWtBanner,
     InstallWindowsTerminal,
     WindowsTerminalInstallTriggered(Result<(), String>),
@@ -71,6 +75,7 @@ pub fn new() -> (State, Task<Message>) {
             profiles::load().map(Message::Profiles),
             providers::load().map(Message::Providers),
             projects::load().map(Message::Projects),
+            skills::load().map(Message::Skills),
         ]),
     )
 }
@@ -93,6 +98,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             sessions::update(&mut state.sessions, inner, &state.profiles.profiles, &state.providers.providers)
                 .map(Message::Sessions)
         }
+        Message::Skills(inner) => skills::update(&mut state.skills, inner, &state.profiles.profiles).map(Message::Skills),
         Message::DismissWtBanner => {
             state.wt_banner_dismissed = true;
             Task::none()
@@ -123,6 +129,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         button(text("Providers")).on_press(Message::SwitchScreen(Screen::Providers)),
         button(text("Projects")).on_press(Message::SwitchScreen(Screen::Projects)),
         button(text("Sessions")).on_press(Message::SwitchScreen(Screen::Sessions)),
+        button(text("Skills")).on_press(Message::SwitchScreen(Screen::Skills)),
     ]
     .spacing(8);
 
@@ -133,6 +140,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             projects::view(&state.projects, &state.profiles.profiles, &state.providers.providers).map(Message::Projects)
         }
         Screen::Sessions => sessions::view(&state.sessions, &state.profiles.profiles).map(Message::Sessions),
+        Screen::Skills => skills::view(&state.skills).map(Message::Skills),
     };
 
     let mut content = column![tabs].spacing(8).width(Length::Fill).height(Length::Fill);

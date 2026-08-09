@@ -27,6 +27,7 @@ version = "0.1.0"
 dependencies = [
  "aam-core",
  "aam-memory",
+ "aam-skills",
  "aam-switcher",
  "aam-sync",
  "iced",
