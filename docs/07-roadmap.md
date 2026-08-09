@@ -81,11 +81,14 @@
 
 对应文档：`06.6`。
 
-**交付物**：
-- `aam-gui`：账号/Provider 管理界面、跨设备项目浏览器，均为 Phase 1-3 CLI 能力的图形化封装。
-- 终端启动动作先退化为"调起系统默认终端并预填好环境变量+命令"，不做真正嵌入。
+**范围比 `06.6` 原文更大**：立项时用户明确要求"GUI 是功能的直接体现，所有功能尽量都加到 GUI 里"，不满足于最小化的"账号管理+项目浏览器"。鉴于这是全项目最大的单块工作（覆盖 `aam-cli` 现有全部子命令域），沿用 Phase 3 的节奏，分轮推进，每轮独立验收：
 
-**验收标准**：不用命令行，纯点击操作，能完成 Phase 1-3 CLI 能覆盖的全部场景。
+- **Round 1（已完成）**：`aam-gui` 骨架（`iced` 0.14，函数式 `application(boot, update, view)` API）+ Profile 管理屏（list/add/verify/挂载 Provider/打开终端登录）+ Provider 管理屏（list/add，API key 遮罩输入，从不显示已存 key）。终端拉起原语 `terminal.rs`：优先探测并使用 Windows Terminal（`wt.exe`），检测不到时退回 `powershell.exe`（这条退回路径必须永远可用），检测不到 `wt.exe` 时 GUI 展示一次性提示，用户点击可触发 `winget install` 协助安装（绝不静默自动装）。新终端窗口打开后直接自动执行命令，不退化成"只给命令"（`06.5` 的正当性依据）。
+- **Round 2（待立项）**：项目浏览器（`aam-memory` 的 list/show/resume/link）+ 会话扫描/采纳/批准同步面板（`05.7`-`05.9`），"接续项目"复用 Round 1 的终端原语。
+- **Round 3（待立项）**：Skills 管理面板（`aam-skills` 全量：list/status/scan/adopt(本地+git)/install-bundled/check-updates/update）。
+- **Round 4（待立项）**：设备/同步管理面板（`aam-sync` 的 vault init/join/list/revoke/reencrypt，Provider/账号 push/pull，会话 sync）。
+
+**验收标准**（Round 4 结束时）：不用命令行，纯点击操作，能完成 Phase 1-3 CLI 能覆盖的全部场景。
 
 ---
 

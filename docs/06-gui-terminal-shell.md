@@ -50,7 +50,15 @@
 
 ## 6.6 Phase 4 / Phase 5 的拆分
 
-- **Phase 4**：GUI 先只做"包裹已有 CLI 能力"——账号/Provider 管理界面（列表、切换、验证状态展示）+ 项目索引浏览器，暂不嵌入真实终端（用"点击后打开系统默认终端并预填命令"过渡，行为上退化成和 `project-tracker` 类似的"给命令"模式）。
+- **Phase 4**：GUI 先只做"包裹已有 CLI 能力"——暂不嵌入真实终端（用"点击后打开系统终端并直接执行命令"过渡）。范围在立项时按用户要求扩大到覆盖全部 CLI 能力，分 Round 推进，见 `07-roadmap.md` Phase 4 一节。
 - **Phase 5**：接入 `iced_term`，实现 6.3-6.4 描述的完整体验（真正嵌入的多标签终端 + 一键接续）。
 
 这个拆分让"GUI 框架搭起来"和"终端嵌入这个技术难度更高的部分"解耦，Phase 4 结束时已经是一个可用的产品（哪怕还没有内嵌终端），不会因为 `iced_term` 遇到问题而阻塞整个 GUI 阶段的交付。
+
+## 6.7 Phase 4 Round 1 实现记录（已实现）
+
+- **`iced` 版本**：`0.14`（发布时最新稳定版，事先用 WebFetch 核对过 `docs.rs`/GitHub 源码确认过 API 形状，没有凭训练记忆硬编码——`iced` 大版本间 API 变动大，`Command` 早年改名成了 `Task`，`Application` trait 风格现在也不是唯一/推荐用法）。用的是函数式 builder：`iced::application(boot_fn, update_fn, view_fn).title(...).run()`，`boot_fn` 返回 `(State, Task<Message>)`，`update_fn` 返回 `Task<Message>`，不是老式的 `Application` trait 实现。
+- **阻塞调用桥接**（`crates/aam-gui/src/task.rs`）：`ProfileRegistry`/`ProviderRegistry` 读写、`verify_login`（起外部进程）这些同步调用，用 `std::thread::spawn` + `iced::futures::channel::oneshot`（`iced` 自带 `futures` re-export，不需要额外引入 `tokio`）包成 `iced::Task`，喂给 `Task::perform`。
+- **终端拉起原语**（`crates/aam-gui/src/terminal.rs`）：优先探测 `wt.exe`（PATH + Microsoft Store 包的 App Execution Alias 常见落点 `%LOCALAPPDATA%\Microsoft\WindowsApps`），找不到永远退回 `powershell.exe`——这条退回路径是硬性要求，不能因为没装 Windows Terminal 就整体失败。命令行拼接（`wt_args`/`powershell_args`）拆成纯函数，脱离真实进程/文件系统单测；真正探测/启动依赖真实环境，人工验证。`install_windows_terminal()`（`winget install`）只从 GUI 里一次性提示的按钮触发，绝不静默自动装。
+- **窗口化 GUI 的可测试性边界**：这是本项目第一次交付真正的窗口应用，没有类似 Chrome DevTools 那样的原生窗口自动化点击工具，`cargo test` 覆盖不到交互行为。已做到的自动化验证：`build`/`clippy -D warnings`/`test` 全绿 + 手动后台启动 `aam-gui.exe`、等待几秒确认进程未崩溃、检查内存/句柄符合真实渲染窗口的特征，再关闭；点击/表单可用性这类主观体验，需要用户自己跑一下亲眼看。
+- **模块划分**：`main.rs`（入口）/`app.rs`（顶层 State/Message/路由，含 Windows Terminal 缺失提示条）/`screens/{profiles,providers}.rs`（各自的局部状态+视图+更新逻辑，直接调用 `aam-switcher` 的 `claude_backend`/`codex_backend`/`ProfileRegistry`/`ProviderRegistry`/`provider_secret_store`——跟 `aam-cli::commands.rs` 的 `run_profile`/`run_provider` 调同一套 API，没有另起业务逻辑）。
