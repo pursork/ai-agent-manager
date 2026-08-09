@@ -134,7 +134,8 @@ aam project enable-full-sync <name>    # 显式开启高风险的完整目录同
 - `autoStatus`：
   - Claude 会话：能从 `ai-title` 记录里提取到，直接复用（今天 `project-tracker` backfill 已经这么做）。
   - Codex 会话：rollout 文件里没有等价的自动摘要字段（`08`）。**默认留空**（`autoStatus: null`，提示用户像 `statusOverride` 一样手动填一句话）。
-  - 加 `--summarize` 时，改为调用一个 Profile 生成摘要并写入 `autoStatus`——**硬性要求：必须用 `--profile <label>` 显式指定用哪个 Profile 做摘要，或读取用户预先 `aam profile set-default` 设置的默认 Profile；两者都没有就报错退出，绝不静默挑选一个 Profile**。原因：摘要意味着把会话内容发给该 Profile 背后的后端，如果这个后端恰好是第三方 API，用户必须是"知情且主动选择"的，不能被动"不小心"把内容发出去。
+  - 加 `--summarize --profile <label>` 时（**已实现**），改为调用 `<label>` 对应 Profile 的 Provider 生成摘要并写入 `autoStatus`——**硬性要求：必须显式给 `--profile`，缺了直接报错退出，绝不静默挑选**；`<label>` 对应的 Profile 必须挂了第三方 Provider，官方订阅没有 `Provider` 实现（`03.1`），选中官方订阅的 Profile 会明确报错而不是尝试用 OAuth 凭据拼一个 API 调用。摘要只对 `autoStatus` 已经是空的会话生成（主要是 Codex），不重新生成/覆盖 Claude 已有的 `ai-title`。**单条摘要失败不中断整个 `adopt`**——打印警告，这一条的 `autoStatus` 留空，继续处理其余会话。
+    - 摘要的输入是会话原始文件（rollout/transcript）的前 6000 字符，不做结构化解析（Claude/Codex 两边 JSONL 结构不同，解析成本不值得，模型对半结构化日志的归纳能力足够），直接连同"用一句话概括这个会话在做什么"的指令一起发给 Provider 的 `complete()`（`Provider` trait 新增的通用文本补全能力，Anthropic Messages API 协议，`X-Api-Key` 认证——协议选择的核实过程见 `08` #17）。
 - **这一步全程本机操作，不触碰网络/WebDAV**（除非 `--summarize` 选用的 Profile 恰好是需要联网调用的后端——但那是"调用 AI 生成摘要"这个动作本身要联网，跟"是否同步到 WebDAV"是两件独立的事，`adopt` 完成后 `syncApproved` 依然是 `false`）。
 
 ## 5.9 显式批准再同步（`aam session approve-sync`）
