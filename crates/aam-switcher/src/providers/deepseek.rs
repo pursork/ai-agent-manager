@@ -1,7 +1,7 @@
 use crate::codex_toml::build_codex_provider_toml;
-use crate::provider::{Provider, ProviderConfig, ToolKind, VerifyError};
+use crate::provider::{CompleteError, Provider, ProviderConfig, ToolKind, VerifyError};
 use crate::token_helper;
-use crate::verify_http::verify_models_endpoint;
+use crate::verify_http::{complete_via_messages_api, verify_models_endpoint};
 use serde_json::json;
 
 const CATALOG_FILE_NAME: &str = "deepseek-v4-flash-models.json";
@@ -90,6 +90,10 @@ impl Provider for DeepSeekProvider {
 
     fn api_key(&self) -> &str {
         &self.api_key
+    }
+
+    fn complete(&self, prompt: &str) -> Result<String, CompleteError> {
+        complete_via_messages_api(&self.base_url, &self.api_key, Self::MODEL, prompt)
     }
 }
 

@@ -279,6 +279,9 @@ mod tests {
         fn api_key(&self) -> &str {
             "fake-api-key"
         }
+        fn complete(&self, _prompt: &str) -> Result<String, crate::provider::CompleteError> {
+            Ok("fake completion".to_string())
+        }
     }
 
     #[test]

@@ -316,12 +316,19 @@ pub enum SessionAction {
     Scan,
     /// Adopts every session `scan` would report: writes it into the index
     /// with `discoverySource: scan`, `syncApproved: false` (`05.8`).
-    ///
-    /// `--summarize` is not implemented yet -- it needs `Provider` to grow
-    /// a generic "complete this prompt" capability first (today's trait
-    /// only does config materialization + reachability checks), tracked
-    /// as a follow-up. Codex sessions keep `autoStatus: null` until then.
-    Adopt,
+    Adopt {
+        /// Generate `autoStatus` via a Provider for sessions that don't
+        /// already have one (mainly Codex -- Claude gets `ai-title` for
+        /// free). Requires `--profile`; the named Profile must have a
+        /// third-party Provider attached (the official subscription has
+        /// no `Provider` to call, `03.1`).
+        #[arg(long)]
+        summarize: bool,
+        /// Which Profile's Provider to summarize with. Never picked
+        /// silently -- required whenever `--summarize` is set (`05.8`).
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Marks previously-adopted (`scan`-sourced) records as approved for
     /// sync (`05.9`). Does not sync anything itself -- `aam session sync`
     /// is what actually pushes to WebDAV.

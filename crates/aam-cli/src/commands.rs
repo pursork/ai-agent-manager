@@ -582,6 +582,52 @@ fn scan_all_profiles() -> Result<Vec<TaggedDiscovery>, Box<dyn Error>> {
     Ok(out)
 }
 
+/// Finds a Profile by `label` alone, regardless of tool -- `--summarize
+/// --profile <label>` doesn't ask which tool, since it's only using the
+/// Profile as a source of a Provider, not to launch anything. Errors
+/// (rather than guessing) if the label matches profiles under both tools
+/// -- an edge case this round doesn't add a disambiguating flag for.
+fn profile_by_label_any_tool(label: &str) -> Result<Profile, Box<dyn Error>> {
+    let matches: Vec<Profile> = profile_registry()
+        .list()?
+        .into_iter()
+        .filter(|p| p.label == label)
+        .collect();
+    match matches.len() {
+        0 => Err(format!("no profile named '{label}' found").into()),
+        1 => Ok(matches.into_iter().next().expect("len == 1")),
+        _ => Err(format!(
+            "'{label}' matches a profile under both claude and codex -- --summarize can't tell which \
+             one you mean; use a differently-labeled profile for summarization"
+        )
+        .into()),
+    }
+}
+
+/// Reads a chunk of the session's source file as-is (no structured
+/// parsing -- Claude/Codex use different JSONL shapes and an LLM's own
+/// ability to infer gist from a semi-structured log excerpt is good
+/// enough, per this round's plan) and asks `provider` to summarize it in
+/// one line.
+fn summarize_session(
+    provider: &dyn Provider,
+    session: &aam_memory::DiscoveredSession,
+) -> Result<String, Box<dyn Error>> {
+    const MAX_EXCERPT_CHARS: usize = 6000;
+
+    let content = std::fs::read_to_string(&session.source_file)
+        .map_err(|e| format!("reading {}: {e}", session.source_file.display()))?;
+    let excerpt: String = content.chars().take(MAX_EXCERPT_CHARS).collect();
+
+    let prompt = format!(
+        "以下是一段编程助手会话的原始日志片段（可能是 JSON Lines 格式，忽略格式本身）。请用一句话\
+         （20 字以内，中文或英文均可）概括这个会话大致在做什么任务。只输出这一句话，不要任何解释、\
+         标点符号以外的其他内容：\n\n{excerpt}"
+    );
+
+    Ok(provider.complete(&prompt)?.trim().to_string())
+}
+
 fn run_session(action: SessionAction) -> Result<(), Box<dyn Error>> {
     match action {
         SessionAction::Scan => {
@@ -604,7 +650,25 @@ fn run_session(action: SessionAction) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
-        SessionAction::Adopt => {
+        SessionAction::Adopt { summarize, profile } => {
+            if summarize && profile.is_none() {
+                return Err(
+                    "--summarize requires --profile <label> -- never picked silently (05.8)".into(),
+                );
+            }
+            let provider: Option<Box<dyn Provider>> = if summarize {
+                let label = profile.as_deref().expect("checked above");
+                let prof = profile_by_label_any_tool(label)?;
+                Some(resolve_provider(&prof)?.ok_or_else(|| {
+                    format!(
+                        "profile '{label}' uses the official subscription (no Provider attached) -- \
+                         --summarize needs a profile with a third-party Provider attached (03.1)"
+                    )
+                })?)
+            } else {
+                None
+            };
+
             let found = scan_all_profiles()?;
             let index = project_index();
             // Reuse this machine's sync identity if a vault has already
@@ -619,7 +683,20 @@ fn run_session(action: SessionAction) -> Result<(), Box<dyn Error>> {
 
             let mut adopted = 0;
             for item in &found {
-                aam_memory::adopt_session(&index, &item.session, &device_id, &item.profile_label, None)?;
+                // Only bother summarizing sessions that don't already have
+                // a free one-line status (Claude's ai-title) -- saves API
+                // calls and never overwrites an already-decent summary.
+                let summary = match (&provider, item.session.auto_status.is_none()) {
+                    (Some(provider), true) => match summarize_session(provider.as_ref(), &item.session) {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            eprintln!("warning: summarize failed for '{}': {e}", item.session.path);
+                            None
+                        }
+                    },
+                    _ => None,
+                };
+                aam_memory::adopt_session(&index, &item.session, &device_id, &item.profile_label, summary)?;
                 adopted += 1;
             }
             println!("adopted {adopted} session(s) (discoverySource=scan, syncApproved=false)");

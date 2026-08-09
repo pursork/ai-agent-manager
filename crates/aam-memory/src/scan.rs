@@ -38,6 +38,11 @@ pub struct DiscoveredSession {
     /// such field), so this is always `None` for `tool_kind == "codex"`.
     pub auto_status: Option<String>,
     pub tool_kind: &'static str,
+    /// The winning transcript/rollout file this session's metadata came
+    /// from (the latest one, if several shared the same `cwd`) --
+    /// `adopt.rs`'s `--summarize` path reads a chunk of this file's raw
+    /// content as the model's input; nothing else in this crate opens it.
+    pub source_file: PathBuf,
 }
 
 fn unix_seconds(t: SystemTime) -> i64 {
@@ -193,6 +198,7 @@ pub fn scan_claude_sessions(
                 created_unix: unix_seconds(entry.earliest_mtime),
                 auto_status: find_latest_ai_title(&entry.latest_file),
                 tool_kind: "claude",
+                source_file: entry.latest_file,
             })
         })
         .collect()
@@ -290,6 +296,7 @@ pub fn scan_codex_sessions(profile_dir: &Path, known_session_ids: &[String]) -> 
             created_unix: unix_seconds(entry.earliest_mtime),
             auto_status: None,
             tool_kind: "codex",
+            source_file: entry.latest_file,
         })
         .collect()
 }

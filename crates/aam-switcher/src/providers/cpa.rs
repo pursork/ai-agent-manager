@@ -1,7 +1,7 @@
 use crate::codex_toml::build_codex_provider_toml;
-use crate::provider::{Provider, ProviderConfig, ToolKind, VerifyError};
+use crate::provider::{CompleteError, Provider, ProviderConfig, ToolKind, VerifyError};
 use crate::token_helper;
-use crate::verify_http::verify_models_endpoint;
+use crate::verify_http::{complete_via_messages_api, verify_models_endpoint};
 
 /// CPA (自建 CLIProxyAPI) -- one of the two Phase 1 Provider implementations
 /// (`docs/03-credential-account-module.md` §3.4).
@@ -72,5 +72,9 @@ impl Provider for CpaProvider {
 
     fn api_key(&self) -> &str {
         &self.api_key
+    }
+
+    fn complete(&self, prompt: &str) -> Result<String, CompleteError> {
+        complete_via_messages_api(&self.base_url, &self.api_key, &self.model, prompt)
     }
 }

@@ -113,6 +113,7 @@ mod tests {
             created_unix: 1_760_000_000,
             auto_status: Some("修好了齿轮问题".into()),
             tool_kind: "claude",
+            source_file: "D:\\research\\Gear-Sys\\session-a.jsonl".into(),
         }
     }
 
