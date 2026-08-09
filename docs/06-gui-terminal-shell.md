@@ -118,4 +118,26 @@ Phase 5 的第一轮，也是全项目第一次嵌入真实 PTY 渲染。按用�
 - **跨屏幕状态的处理方式**：`profiles::Message::OpenEmbedded`/`projects::Message::ResumeEmbedded` 这两个新消息变体，各自屏幕的 `update` 里只有一个"什么都不做"的兜底分支（保持 `match` 穷尽性检查通过），真正的逻辑在 `app::update` 顶层拦截处理——因为打开内嵌标签页需要改 `state.terminal`，这是兄弟屏幕的状态，`profiles.rs`/`projects.rs` 自己没有访问权限。`projects.rs` 的 `resumable`/`record_tool`/`resume_command` 三个函数改成 `pub(crate)`，被 `app.rs` 直接复用，跟外部窗口路径共用同一套"能不能接续"判断和命令行构造，不是重新写一遍容易跟外部窗口路径慢慢分叉的逻辑。
 - **一个真实的类型系统坑**：`style.rs` 的 `primary_button`/`secondary_button` 原来接收 `&'a str`，标签栏里每个标签的文字是循环内 `format!` 出来的临时 `String`（比如给当前激活的标签加一个"▶ "前缀），借用生命周期不够长，编译不过。改成 `impl iced::advanced::text::IntoFragment<'a>`——这个 trait 对 `&'a str`、`&'a String`、**拥有所有权的 `String`** 都有实现（`iced_core::text::IntoFragment` 源码确认过），换成这个之后字符串字面量和临时拼出来的 `String` 都能直接传，不需要额外中转。
 - **测试策略延续 `aam-skills` 的真实-`git`测试先例**：`open_tab`/`close_tab`（id 分配、关闭标签后 active 该落到哪个标签）的单测**真的会起 `powershell.exe` PTY**（3 个测试共起 6 个真实进程），不是 mock——跟真实 `git` 测试同一个理由：本机永远有的程序、纯本地操作、不涉及网络/凭据，没必要为了"避免起真实进程"单独抽一层可以注入假货的接口。
-- **验收边界**：跟 Round 1 一样，这轮加的多标签切换/关闭顺不顺手、内嵌打开的终端标题/工作目录/环境变量对不对，都需要用户实际点。
+- **验收边界（已改用自动化验证，见 6.13）**：用户明确反馈不想每轮都被要求手动验证——之后改成用 Win32 API 驱动真实点击/键盘输入 + 截图，自己把 Round 1 和这轮一起验证掉，细节和结果见 `6.13`。
+
+## 6.13 用截图 + 合成输入自证 Round 1/2（不再要求用户逐轮验证）
+
+用户明确要求："尽量别要求我进行验证（除非是最后的总验证），我现在没有时间一轮一轮替你去验证，你自己想办法。"——这条反馈之前"每轮结束请用户实际点一遍"的验收方式不再适用，改成尽量自己把能自动化的部分做掉，只把真正需要人主观判断的部分（好不好用、体验顺不顺）留到最后一次性验收。
+
+**方法**：PowerShell + P/Invoke `user32.dll`/`System.Drawing`，脚本存在 `scratchpad/gui_probe.ps1`：
+
+- `Pin-Window`：`SetWindowPos` 把窗口钉到屏幕固定位置/大小（`(0,0)`，`1100x850`），`SetForegroundWindow` 前台，随后校验 `GetForegroundWindow()` 确实是目标窗口——**第一次尝试时窗口还停留在系统默认弹出位置，跟桌面上其他真实窗口（代码编辑器、数据采集软件）重叠，第一次合成点击点偏了、点到了别的真实窗口上**（没造成损坏，只是点开了那个窗口的一个输入框，没敲字符），之后都先钉住窗口再操作，避免误触桌面上其他程序。
+- `Click-At`：`SendInput` 发送绝对坐标的鼠标移动+按下+抬起，不是旧版 `mouse_event`（旧版兼容性没问题，但换 `SendInput` + `SetProcessDPIAware` 更稳）。
+- `Send-Text-Safe`/`Send-Ascii-Safe`：发送前先查一次 `GetForegroundWindow()` 是不是目标窗口，不是就拒绝发送——避免焦点被偷走时把按键打进无关窗口。**踩了一个坑**：先试的 `KEYEVENTF_UNICODE` 合成按键（模拟真实字符输入的标准做法），敲的字符在 `iced_term` 渲染的终端里完全没反应（但同一时间发的 Enter 键——一个真实的虚拟键码——确实生效了，终端换了新的一行提示符）——说明 `iced`/`winit` 这类基于 wgpu 渲染的窗口读的是真实虚拟键码（`WM_KEYDOWN`），不是 `WM_CHAR` 组合消息。换成 `VkKeyScanEx` 查表 + 发送真实 `wVk` 的按键事件后，字符正常输入。
+- 每一步操作后截图（`Screenshot`：`GetWindowRect` + `Graphics.CopyFromScreen`），用 `Read` 工具直接看图确认。
+
+**验证到的结果（Round 1 + Round 2 一次性做完）**：
+
+1. 点 Terminal 标签页，内嵌终端渲染出真实的 PowerShell 提示符（`(base) PS C:\Users\...>`）——Round 1"能不能渲染"的问题有了确切答案。
+2. 点进终端区域、合成输入 `echo AAM_GUI_REALVK_TEST_777` 回车，终端里正确回显了命令（带语法高亮）和执行结果——**键盘输入和命令执行都是真的在工作**，不是猜测。
+3. 点"+ 新终端"开出第二个标签、切换回第一个标签（历史记录还在，没丢）、关掉第二个标签——多标签开/切/关全部通过截图确认。
+4. 关闭标签后查了一次 `Win32_Process`，确认那个标签对应的 `powershell.exe` 子进程真的被杀掉了，不是只在整个 App 关闭时才清理。
+5. 在一个隔离环境（`USERPROFILE`/`AAM_HOME` 指向临时目录，`aam profile add` 建一个假 Profile，不碰用户真实数据）里点 Profiles 屏的"打开终端（内嵌）"，确认：自动跳转到 Terminal 屏、新标签标题正确显示"embedtest · claude"、环境变量注入正确（`CLAUDE_CONFIG_DIR` 指向了这个隔离 Profile 的目录）——**证据是内嵌终端里真的跑起了 `claude`，并且因为这是全新目录，`claude` 弹出了它自己真实的首次运行主题选择向导，界面渲染（TUI 菜单、colored diff）都正常**。验证到这一步就主动退出（`taskkill /T /F` 杀掉整个进程树，不继续走真实的登录流程），没有产生任何真实的 Claude 账号交互。
+6. 全程没有创建/修改用户真实的 `~/.aam`/`~/.claude` 状态——Profile 创建测试用的是完全独立的临时目录，用完删掉。
+
+**这个方法目前还没做、留给以后需要时再补的部分**：Projects 屏"接续（内嵌）"没有单独截图验证（复用的是跟"打开终端（内嵌）"完全相同的 `open_tab` 调用路径和已经验证过的 `resumable`/`launch_env` 逻辑，边际验证价值低，不是遗漏）；没有验证内嵌终端的鼠标滚动/文本选择/复制粘贴这些次要交互。
