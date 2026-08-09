@@ -294,11 +294,23 @@ mod tests {
 
         // Push a new commit to "upstream" from a second working copy, so
         // the already-cloned canonical directory falls behind.
+        //
+        // Must pass `--branch main` explicitly, same as `setup_git_skill`'s
+        // first clone: the bare repo's HEAD symbolic ref stays whatever
+        // `init.defaultBranch` was at `git init --bare` time (unset by us),
+        // which can differ from "main" depending on this git install's
+        // config (confirmed: passed locally, failed on CI's windows-latest
+        // runner with "remote HEAD refers to nonexistent ref" followed by
+        // "src refspec main does not match any" on the later push --
+        // `seed`'s `branch -M main` only renames *its own* branch, it never
+        // touches the bare remote's HEAD pointer). Cloning without
+        // `--branch` leaves this second clone with no local "main" to
+        // commit onto at all.
         let second_clone = base.0.join("second-clone");
         let clone_status = Command::new("git")
             .arg("-c")
             .arg("safe.directory=*")
-            .args(["clone", "--quiet"])
+            .args(["clone", "--quiet", "--branch", "main"])
             .arg(&upstream)
             .arg(&second_clone)
             .status()
