@@ -17,12 +17,14 @@
 
 mod adopt;
 mod index;
+mod project_link;
 mod record;
 mod scan;
 mod sync;
 
 pub use adopt::{adopt_session, approve_all_scanned, approve_sync};
 pub use index::{IndexError, ProjectIndex};
+pub use project_link::{link_projects, LinkError};
 pub use record::ProjectRecord;
 pub use scan::{scan_claude_sessions, scan_codex_sessions, DiscoveredSession};
 pub use sync::{remote_mirror_index, remote_mirror_path, sync_index, MemorySyncError};

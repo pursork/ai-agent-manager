@@ -731,14 +731,18 @@ fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
                 println!("discovery:       {}", p.discovery_source);
                 println!("sync approved:   {}", p.sync_approved);
                 println!("last session id: {}", p.last_session_id);
+                println!("project id:      {}", p.project_id.as_deref().unwrap_or("-"));
                 println!();
             }
             Ok(())
         }
 
         ProjectAction::Resume { name } => {
-            let index = project_index();
-            let matches = index.find_fuzzy(&name)?;
+            let query = name.to_lowercase();
+            let matches: Vec<_> = local_and_mirrored_projects()?
+                .into_iter()
+                .filter(|p| p.name.to_lowercase().contains(&query) || p.path.to_lowercase().contains(&query))
+                .collect();
             let record = match matches.as_slice() {
                 [] => return Err(format!("no project matching '{name}' found").into()),
                 [one] => one,
@@ -779,11 +783,35 @@ fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
                 }
             }
 
+            // 05.3: only ever *tell* the user where to go -- never assume
+            // the path exists just because a record mentions it (it may
+            // well be a cross-device record from the mirror).
+            if !std::path::Path::new(&record.path).is_dir() {
+                let device_note = if record.device_id.is_empty() {
+                    String::new()
+                } else {
+                    format!("（记录设备 id: {}）", record.device_id)
+                };
+                println!(
+                    "本机未找到目录 '{}'{device_note}。如果这条记录来自另一台设备，请前往该设备继续。",
+                    record.path
+                );
+                return Ok(());
+            }
+
             println!("cd \"{}\"", record.path);
             match record.tool_kind.as_str() {
                 "codex" => println!("codex resume {}", record.last_session_id),
                 _ => println!("claude --resume {}", record.last_session_id),
             }
+            Ok(())
+        }
+
+        ProjectAction::Link { path_a, path_b } => {
+            let local = project_index();
+            let mirror = aam_memory::remote_mirror_index();
+            let project_id = aam_memory::link_projects(&local, &mirror, &path_a, &path_b)?;
+            println!("linked '{path_a}' and '{path_b}' under projectId '{project_id}'");
             Ok(())
         }
     }

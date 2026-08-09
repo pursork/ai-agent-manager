@@ -290,16 +290,23 @@ pub enum SyncAction {
 
 #[derive(Subcommand)]
 pub enum ProjectAction {
-    /// Lists every locally recorded project (`05.6`'s local view -- cross-
-    /// device aggregation lands once `aam session sync` exists).
+    /// Lists every project record, local and cross-device-mirrored
+    /// (`05.6`; simple concatenation, not deduplicated -- see `link`).
     List,
-    /// Shows every locally recorded entry matching `name` (fuzzy: name or
-    /// trailing path segment, case-insensitive).
+    /// Shows every entry matching `name` (fuzzy: name or trailing path
+    /// segment, case-insensitive), local and mirrored.
     Show { name: String },
     /// Prints the `cd` + resume command for a project. Never runs it --
     /// this project cannot change your shell's working directory
-    /// (`05.3`'s "只提示，不搬迁" rule).
+    /// (`05.3`'s "只提示，不搬迁" rule). If the record's path doesn't
+    /// exist on this machine (e.g. it's a mirrored record from another
+    /// device), says so instead of printing commands that would fail.
     Resume { name: String },
+    /// Manually declares that two records (by path, local and/or
+    /// mirrored) are the same logical project, giving them a shared
+    /// `projectId` (`08` #8). No automatic matching -- this is the only
+    /// way two records get linked.
+    Link { path_a: String, path_b: String },
 }
 
 #[derive(Subcommand)]
