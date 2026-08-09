@@ -317,13 +317,23 @@ pub enum SessionAction {
     Adopt,
     /// Marks previously-adopted (`scan`-sourced) records as approved for
     /// sync (`05.9`). Does not sync anything itself -- `aam session sync`
-    /// (not yet implemented, see `08` #15's sibling item) is what actually
-    /// pushes to WebDAV.
+    /// is what actually pushes to WebDAV.
     ApproveSync {
         /// Project paths to approve (see `aam project list`).
         names: Vec<String>,
         #[arg(long = "all-scanned")]
         all_scanned: bool,
+    },
+    /// Syncs the Memory-Bank index with the vault: pulls the current
+    /// shared set, replaces this device's own slice with its current
+    /// `syncApproved` records, pushes the result (`05.6`). Cross-device
+    /// records land in a local mirror, never in `project-tracker`'s own
+    /// `project-index.json` (`08` #9).
+    Sync {
+        #[arg(long)]
+        webdav_url: String,
+        #[arg(long)]
+        webdav_user: String,
     },
 }
 

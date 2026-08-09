@@ -67,6 +67,13 @@ pub struct ProjectRecord {
     /// records default to already-approved-for-sync.
     #[serde(rename = "syncApproved", default = "default_true")]
     pub sync_approved: bool,
+    /// Candidate cross-device logical project identity (`docs/08-open-questions-risks.md`
+    /// #8) -- `None` by default. This Phase 3b round only adds the field;
+    /// nothing yet auto-generates or matches on it, so cross-device
+    /// display (`aam project list`) still works by simple concatenation,
+    /// not by grouping on this.
+    #[serde(rename = "projectId", default)]
+    pub project_id: Option<String>,
 }
 
 impl ProjectRecord {
@@ -126,6 +133,7 @@ mod tests {
             full_sync_status: Some("ok".into()),
             discovery_source: "scan".into(),
             sync_approved: false,
+            project_id: Some("proj-1".into()),
         };
         let json = serde_json::to_string(&record).unwrap();
         let parsed: ProjectRecord = serde_json::from_str(&json).unwrap();
@@ -150,6 +158,7 @@ mod tests {
             full_sync_status: None,
             discovery_source: "live".into(),
             sync_approved: true,
+            project_id: None,
         };
         assert_eq!(record.display_status(), None);
 

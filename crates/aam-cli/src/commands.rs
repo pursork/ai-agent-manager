@@ -645,14 +645,51 @@ fn run_session(action: SessionAction) -> Result<(), Box<dyn Error>> {
             println!("approved {approved} record(s) for sync");
             Ok(())
         }
+
+        SessionAction::Sync { webdav_url, webdav_user } => {
+            let password = prompt_hidden("WebDAV password: ")?;
+            let passphrase = prompt_hidden("Vault master passphrase: ")?;
+            let backend = webdav_backend(webdav_url, webdav_user, password);
+            let identity = require_local_identity()?;
+            let manifest = aam_sync::list_devices(&backend, &passphrase)?;
+            let recipients = manifest.active_recipients();
+
+            let local = project_index();
+            let mirror = aam_memory::remote_mirror_index();
+            let meta = aam_memory::sync_index(
+                &backend,
+                &local,
+                &mirror,
+                &recipients,
+                &identity.device_id,
+                &identity.private_key,
+            )?;
+            println!("synced Memory-Bank index (version {})", meta.version);
+            println!(
+                "other devices' records now visible in `aam project list` (mirrored separately -- \
+                 project-index.json itself is untouched)"
+            );
+            Ok(())
+        }
     }
+}
+
+/// Concatenates the local (real `project-index.json`, `project-tracker`
+/// still writes it) and mirrored (other devices', from the last `aam
+/// session sync`) record sets for display. Deliberately not deduplicated
+/// by name/path here -- that needs the real cross-device identity
+/// (`projectId`, `docs/08-open-questions-risks.md` #8) this round only
+/// adds a field placeholder for, not matching logic.
+fn local_and_mirrored_projects() -> Result<Vec<aam_memory::ProjectRecord>, Box<dyn Error>> {
+    let mut all = project_index().list()?;
+    all.extend(aam_memory::remote_mirror_index().list()?);
+    Ok(all)
 }
 
 fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
     match action {
         ProjectAction::List => {
-            let index = project_index();
-            let mut projects = index.list()?;
+            let mut projects = local_and_mirrored_projects()?;
             projects.sort_by(|a, b| b.last_active.cmp(&a.last_active));
             if projects.is_empty() {
                 println!("(no tracked projects yet -- run `aam session scan`/`adopt` to find some)");
@@ -671,8 +708,11 @@ fn run_project(action: ProjectAction) -> Result<(), Box<dyn Error>> {
         }
 
         ProjectAction::Show { name } => {
-            let index = project_index();
-            let matches = index.find_fuzzy(&name)?;
+            let query = name.to_lowercase();
+            let matches: Vec<_> = local_and_mirrored_projects()?
+                .into_iter()
+                .filter(|p| p.name.to_lowercase().contains(&query) || p.path.to_lowercase().contains(&query))
+                .collect();
             if matches.is_empty() {
                 return Err(format!("no project matching '{name}' found").into());
             }

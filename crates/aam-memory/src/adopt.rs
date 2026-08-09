@@ -53,6 +53,7 @@ pub fn adopt_session(
         full_sync_status: None,
         discovery_source: "scan".to_string(),
         sync_approved: false,
+        project_id: None,
     };
     index.upsert(record)
 }

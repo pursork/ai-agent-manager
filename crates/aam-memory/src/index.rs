@@ -134,6 +134,15 @@ impl ProjectIndex {
         self.save(&file)
     }
 
+    /// Overwrites the entire file with exactly `records` -- unlike
+    /// `upsert`, this drops anything not in `records`. Used for
+    /// `remote-index.json` (`sync.rs`), which after each sync should hold
+    /// *exactly* the current shared cross-device set, not accumulate
+    /// stale entries from earlier syncs.
+    pub fn replace_all(&self, records: Vec<ProjectRecord>) -> Result<(), IndexError> {
+        self.save(&IndexFile { projects: records })
+    }
+
     /// Applies `f` to the record matching `path` (case-insensitive) and
     /// saves the result. Errors with [`IndexError::NotFound`] if no such
     /// record exists.
@@ -187,7 +196,22 @@ mod tests {
             full_sync_status: None,
             discovery_source: "live".into(),
             sync_approved: true,
+            project_id: None,
         }
+    }
+
+    #[test]
+    fn replace_all_drops_records_not_in_the_new_set() {
+        let (index, dir) = temp_index("replace-all");
+        index.upsert(sample("/x/y", "y")).unwrap();
+        index.upsert(sample("/x/z", "z")).unwrap();
+        assert_eq!(index.list().unwrap().len(), 2);
+
+        index.replace_all(vec![sample("/x/w", "w")]).unwrap();
+        let projects = index.list().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "w");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
