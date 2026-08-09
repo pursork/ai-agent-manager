@@ -17,3 +17,5 @@ path = "src/main.rs"
 iced = "0.14"
 aam-switcher = { path = "../aam-switcher" }
 aam-core = { path = "../aam-core" }
+aam-memory = { path = "../aam-memory" }
+aam-sync = { path = "../aam-sync" }

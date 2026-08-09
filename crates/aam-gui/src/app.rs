@@ -2,23 +2,33 @@
 //! routes messages/tasks to it. Per `docs/06-gui-terminal-shell.md` §6.2,
 //! this file (and its `screens::*` children) contain **no business
 //! logic** of their own -- every actual operation is a call into
-//! `aam-switcher`'s already-CLI-tested public API.
+//! `aam-switcher`/`aam-memory`/`aam-sync`'s already-CLI-tested public API.
+//!
+//! `profiles`/`providers` are the single owners of their own lists;
+//! `projects`/`sessions` don't keep mirrored copies (Phase 4 Round 2
+//! plan, design item 2) -- `update`/`view` just borrow
+//! `&state.profiles.profiles`/`&state.providers.providers` for the
+//! duration of the call.
 
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Task};
 
-use crate::screens::{profiles, providers};
+use crate::screens::{profiles, projects, providers, sessions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Profiles,
     Providers,
+    Projects,
+    Sessions,
 }
 
 pub struct State {
     screen: Screen,
     profiles: profiles::State,
     providers: providers::State,
+    projects: projects::State,
+    sessions: sessions::State,
     /// Whether `wt.exe` was found at startup -- checked once; the user
     /// would need to restart `aam-gui` after installing it anyway for a
     /// fresh PATH to take effect, so there's no point re-checking live.
@@ -33,6 +43,8 @@ impl Default for State {
             screen: Screen::Profiles,
             profiles: profiles::State::default(),
             providers: providers::State::default(),
+            projects: projects::State::default(),
+            sessions: sessions::State::default(),
             wt_available: crate::terminal::wt_available(),
             wt_banner_dismissed: false,
             wt_install_status: None,
@@ -45,6 +57,8 @@ pub enum Message {
     SwitchScreen(Screen),
     Profiles(profiles::Message),
     Providers(providers::Message),
+    Projects(projects::Message),
+    Sessions(sessions::Message),
     DismissWtBanner,
     InstallWindowsTerminal,
     WindowsTerminalInstallTriggered(Result<(), String>),
@@ -56,6 +70,7 @@ pub fn new() -> (State, Task<Message>) {
         Task::batch([
             profiles::load().map(Message::Profiles),
             providers::load().map(Message::Providers),
+            projects::load().map(Message::Projects),
         ]),
     )
 }
@@ -66,17 +81,17 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.screen = screen;
             Task::none()
         }
-        Message::Profiles(inner) => profiles::update(&mut state.profiles, inner).map(Message::Profiles),
-        Message::Providers(inner) => {
-            let provider_task = providers::update(&mut state.providers, inner).map(Message::Providers);
-            // The Profiles screen's "assign provider" dropdown needs to
-            // know what Providers exist -- resync its read-only mirror
-            // after every change to the authoritative list (cheap: just
-            // cloning a small Vec, no I/O).
-            let sync_task = Task::done(Message::Profiles(profiles::Message::ProvidersSynced(
-                state.providers.providers.clone(),
-            )));
-            Task::batch([provider_task, sync_task])
+        Message::Profiles(inner) => {
+            profiles::update(&mut state.profiles, inner, &state.providers.providers).map(Message::Profiles)
+        }
+        Message::Providers(inner) => providers::update(&mut state.providers, inner).map(Message::Providers),
+        Message::Projects(inner) => {
+            projects::update(&mut state.projects, inner, &state.profiles.profiles, &state.providers.providers)
+                .map(Message::Projects)
+        }
+        Message::Sessions(inner) => {
+            sessions::update(&mut state.sessions, inner, &state.profiles.profiles, &state.providers.providers)
+                .map(Message::Sessions)
         }
         Message::DismissWtBanner => {
             state.wt_banner_dismissed = true;
@@ -106,12 +121,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let tabs = row![
         button(text("Profiles")).on_press(Message::SwitchScreen(Screen::Profiles)),
         button(text("Providers")).on_press(Message::SwitchScreen(Screen::Providers)),
+        button(text("Projects")).on_press(Message::SwitchScreen(Screen::Projects)),
+        button(text("Sessions")).on_press(Message::SwitchScreen(Screen::Sessions)),
     ]
     .spacing(8);
 
     let body: Element<'_, Message> = match state.screen {
-        Screen::Profiles => profiles::view(&state.profiles).map(Message::Profiles),
+        Screen::Profiles => profiles::view(&state.profiles, &state.providers.providers).map(Message::Profiles),
         Screen::Providers => providers::view(&state.providers).map(Message::Providers),
+        Screen::Projects => {
+            projects::view(&state.projects, &state.profiles.profiles, &state.providers.providers).map(Message::Projects)
+        }
+        Screen::Sessions => sessions::view(&state.sessions, &state.profiles.profiles).map(Message::Sessions),
     };
 
     let mut content = column![tabs].spacing(8).width(Length::Fill).height(Length::Fill);

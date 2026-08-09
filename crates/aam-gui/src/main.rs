@@ -5,7 +5,9 @@
 //! lives here (§6.2) -- see `app.rs` and `screens/*`.
 
 mod app;
+mod launch;
 mod screens;
+mod style;
 mod task;
 mod terminal;
 

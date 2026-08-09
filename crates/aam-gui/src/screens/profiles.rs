@@ -3,13 +3,19 @@
 //! Provider, and open a terminal under a Profile's environment -- the
 //! graphical equivalent of `aam profile list/add/verify/use-provider`
 //! (`crates/aam-cli/src/commands.rs::run_profile`).
+//!
+//! Doesn't own a copy of the Providers list -- `app.rs` passes
+//! `&[ProviderRecord]` in from `providers::State` on every `view`/relevant
+//! `update` call (Phase 4 Round 2 plan, design item 2: avoids every
+//! screen that needs it maintaining its own mirror + sync message).
 
 use std::collections::HashMap;
 
-use aam_switcher::{claude_backend, codex_backend, ApplyCodexProvider, Profile, ProfileRegistry, Provider, ProviderRecord, Tool};
-use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use aam_switcher::{claude_backend, codex_backend, ApplyCodexProvider, Profile, ProfileRegistry, ProviderRecord, Tool};
+use iced::widget::{column, container, pick_list, row, text, text_input};
 use iced::{Element, Length, Task};
 
+use crate::style::{primary_button, secondary_button, SPACING_LG, SPACING_MD, SPACING_SM};
 use crate::task::perform;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,10 +29,6 @@ pub enum VerifyStatus {
 
 pub struct State {
     pub profiles: Vec<Profile>,
-    /// Loaded alongside profiles so the "assign provider" dropdown has
-    /// something to offer -- the Providers screen owns the authoritative
-    /// copy; this is a read-only mirror kept in sync via `ProvidersSynced`.
-    pub providers: Vec<ProviderRecord>,
     pub verify_status: HashMap<(Tool, String), VerifyStatus>,
     pub new_label: String,
     pub new_tool: Tool,
@@ -38,7 +40,6 @@ impl Default for State {
     fn default() -> Self {
         Self {
             profiles: Vec::new(),
-            providers: Vec::new(),
             verify_status: HashMap::new(),
             new_label: String::new(),
             // `Tool` is defined in `aam_switcher`, so this crate can't add
@@ -60,7 +61,6 @@ impl State {
 #[derive(Debug, Clone)]
 pub enum Message {
     Loaded(Result<Vec<Profile>, String>),
-    ProvidersSynced(Vec<ProviderRecord>),
     NewLabelChanged(String),
     NewToolChanged(Tool),
     SubmitNew,
@@ -77,7 +77,7 @@ pub fn load() -> Task<Message> {
     perform(|| ProfileRegistry::open_default().list().map_err(|e| e.to_string()), Message::Loaded)
 }
 
-pub fn update(state: &mut State, message: Message) -> Task<Message> {
+pub fn update(state: &mut State, message: Message, providers: &[ProviderRecord]) -> Task<Message> {
     match message {
         Message::Loaded(Ok(profiles)) => {
             state.profiles = profiles;
@@ -85,10 +85,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Loaded(Err(e)) => {
             state.status_message = Some(format!("加载 Profile 列表失败: {e}"));
-            Task::none()
-        }
-        Message::ProvidersSynced(providers) => {
-            state.providers = providers;
             Task::none()
         }
         Message::NewLabelChanged(v) => {
@@ -162,7 +158,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.verify_status.insert(State::key(tool, &label), status);
             Task::none()
         }
-        Message::OpenTerminal(tool, label) => open_terminal_for(state, tool, label),
+        Message::OpenTerminal(tool, label) => open_terminal_for(state, tool, label, providers),
         Message::TerminalOpened(Ok(())) => Task::none(),
         Message::TerminalOpened(Err(e)) => {
             state.status_message = Some(format!("打开终端失败: {e}"));
@@ -170,7 +166,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::AssignProvider(tool, label, provider_id) => {
             let profile = state.profiles.iter().find(|p| p.tool == tool && p.label == label).cloned();
-            let provider_record = state.providers.iter().find(|p| p.id == provider_id).cloned();
+            let provider_record = providers.iter().find(|p| p.id == provider_id).cloned();
             let (Some(profile), Some(record)) = (profile, provider_record) else {
                 return Task::none();
             };
@@ -222,21 +218,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 /// the place to complete the interactive login (`aam-gui` only opens the
 /// terminal; the login prompt inside it is 100% user-driven, never
 /// scripted).
-fn open_terminal_for(state: &mut State, tool: Tool, label: String) -> Task<Message> {
+fn open_terminal_for(state: &mut State, tool: Tool, label: String, providers: &[ProviderRecord]) -> Task<Message> {
     let profile = state.profiles.iter().find(|p| p.tool == tool && p.label == label).cloned();
     let Some(profile) = profile else {
         return Task::none();
     };
-    let providers = state.providers.clone();
+    let providers = providers.to_vec();
     perform(
         move || {
-            let env = match tool {
-                Tool::Claude => {
-                    let provider_obj = resolve_provider(&profile, &providers);
-                    claude_backend::launch_env(&profile, provider_obj.as_deref())
-                }
-                Tool::Codex => codex_backend::launch_env(&profile),
-            };
+            let env = crate::launch::launch_env(tool, &profile, &providers);
             crate::terminal::open_terminal(None, &env, tool.as_str())
                 .map(|_child| ())
                 .map_err(|e| e.to_string())
@@ -245,15 +235,8 @@ fn open_terminal_for(state: &mut State, tool: Tool, label: String) -> Task<Messa
     )
 }
 
-fn resolve_provider(profile: &Profile, providers: &[ProviderRecord]) -> Option<Box<dyn Provider>> {
-    let id = profile.provider.as_ref()?;
-    let record = providers.iter().find(|p| &p.id == id)?.clone();
-    let key = aam_switcher::provider_secret_store().ok()?.load(&record.id).ok()??;
-    Some(aam_switcher::build_provider(&record, key))
-}
-
-pub fn view(state: &State) -> Element<'_, Message> {
-    let mut list = column![].spacing(8);
+pub fn view<'a>(state: &'a State, providers: &'a [ProviderRecord]) -> Element<'a, Message> {
+    let mut list = column![].spacing(SPACING_MD);
     if state.profiles.is_empty() {
         list = list.push(text("(还没有 Profile，用下面的表单新建一个)"));
     }
@@ -267,7 +250,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             VerifyStatus::NotLoggedIn => "未登录".to_string(),
             VerifyStatus::Error => "验证出错".to_string(),
         };
-        let provider_ids: Vec<String> = state.providers.iter().map(|p| p.id.clone()).collect();
+        let provider_ids: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
         let assign_row = row![
             pick_list(provider_ids, profile.provider.clone(), {
                 let tool = profile.tool;
@@ -276,18 +259,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
             })
             .placeholder("挂载 Provider..."),
         ]
-        .spacing(4);
+        .spacing(SPACING_SM);
 
         let row_el = row![
             text(profile.tool.as_str()).width(Length::Fixed(70.0)),
             text(profile.label.clone()).width(Length::Fixed(140.0)),
             text(profile.config_dir.display().to_string()).width(Length::Fill),
             text(status_text).width(Length::Fixed(80.0)),
-            button(text("验证")).on_press(Message::Verify(profile.tool, profile.label.clone())),
-            button(text("打开终端")).on_press(Message::OpenTerminal(profile.tool, profile.label.clone())),
+            secondary_button("验证", Some(Message::Verify(profile.tool, profile.label.clone()))),
+            primary_button("打开终端", Some(Message::OpenTerminal(profile.tool, profile.label.clone()))),
             assign_row,
         ]
-        .spacing(8)
+        .spacing(SPACING_MD)
         .align_y(iced::Alignment::Center);
 
         list = list.push(row_el);
@@ -296,19 +279,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let new_profile_form = column![
         text("新建 Profile").size(18),
         row![
-            button(text("Claude")).on_press(Message::NewToolChanged(Tool::Claude)),
-            button(text("Codex")).on_press(Message::NewToolChanged(Tool::Codex)),
+            secondary_button("Claude", Some(Message::NewToolChanged(Tool::Claude))),
+            secondary_button("Codex", Some(Message::NewToolChanged(Tool::Codex))),
             text(format!("当前选择: {}", state.new_tool)),
         ]
-        .spacing(8),
+        .spacing(SPACING_MD),
         text_input("label", &state.new_label).on_input(Message::NewLabelChanged),
-        button(text(if state.creating { "创建中..." } else { "创建" })).on_press_maybe(if state.creating {
-            None
-        } else {
-            Some(Message::SubmitNew)
-        }),
+        primary_button(
+            if state.creating { "创建中..." } else { "创建" },
+            if state.creating { None } else { Some(Message::SubmitNew) }
+        ),
     ]
-    .spacing(8);
+    .spacing(SPACING_MD);
 
     let status = state
         .status_message
@@ -323,9 +305,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
             new_profile_form,
             status,
         ]
-        .spacing(16),
+        .spacing(SPACING_LG),
     )
-    .padding(16)
+    .padding(SPACING_LG)
     .into()
 }
 

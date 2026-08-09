@@ -5,9 +5,10 @@
 //! saved API key -- same rule the CLI's `provider list` follows.
 
 use aam_switcher::{ProviderKind, ProviderRecord, ProviderRegistry};
-use iced::widget::{button, checkbox, column, container, row, text, text_input};
+use iced::widget::{checkbox, column, container, row, text, text_input};
 use iced::{Element, Length, Task};
 
+use crate::style::{primary_button, secondary_button, SPACING_LG, SPACING_MD};
 use crate::task::perform;
 
 pub struct NewProviderForm {
@@ -161,7 +162,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-    let mut list = column![].spacing(8);
+    let mut list = column![].spacing(SPACING_MD);
     if state.providers.is_empty() {
         list = list.push(text("(还没有 Provider)"));
     }
@@ -173,7 +174,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 text(p.base_url.clone()).width(Length::Fill),
                 text(format!("model={}", p.model)).width(Length::Fixed(200.0)),
             ]
-            .spacing(8),
+            .spacing(SPACING_MD),
         );
     }
 
@@ -181,11 +182,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let new_provider_form = column![
         text("新增 Provider").size(18),
         row![
-            button(text("cpa")).on_press(Message::KindChanged(ProviderKind::Cpa)),
-            button(text("deepseek-v4-flash")).on_press(Message::KindChanged(ProviderKind::DeepseekV4Flash)),
+            secondary_button("cpa", Some(Message::KindChanged(ProviderKind::Cpa))),
+            secondary_button("deepseek-v4-flash", Some(Message::KindChanged(ProviderKind::DeepseekV4Flash))),
             text(format!("当前选择: {}", form.kind)),
         ]
-        .spacing(8),
+        .spacing(SPACING_MD),
         text_input("id (留空则用 kind 名字)", &form.id).on_input(Message::IdChanged),
         text_input("base_url", &form.base_url).on_input(Message::BaseUrlChanged),
         model_field(form),
@@ -195,13 +196,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .on_toggle(Message::SupportsWebsocketsToggled),
         text_input("reasoning_effort", &form.reasoning_effort).on_input(Message::ReasoningEffortChanged),
         text_input("plan_reasoning_effort", &form.plan_reasoning_effort).on_input(Message::PlanReasoningEffortChanged),
-        button(text(if state.saving { "保存中..." } else { "保存" })).on_press_maybe(if state.saving {
-            None
-        } else {
-            Some(Message::Submit)
-        }),
+        primary_button(
+            if state.saving { "保存中..." } else { "保存" },
+            if state.saving { None } else { Some(Message::Submit) }
+        ),
     ]
-    .spacing(8);
+    .spacing(SPACING_MD);
 
     let status = state
         .status_message
@@ -217,9 +217,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
             new_provider_form,
             status,
         ]
-        .spacing(16),
+        .spacing(SPACING_LG),
     )
-    .padding(16)
+    .padding(SPACING_LG)
     .into()
 }
 
