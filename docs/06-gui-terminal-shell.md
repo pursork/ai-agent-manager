@@ -62,3 +62,18 @@
 - **终端拉起原语**（`crates/aam-gui/src/terminal.rs`）：优先探测 `wt.exe`（PATH + Microsoft Store 包的 App Execution Alias 常见落点 `%LOCALAPPDATA%\Microsoft\WindowsApps`），找不到永远退回 `powershell.exe`——这条退回路径是硬性要求，不能因为没装 Windows Terminal 就整体失败。命令行拼接（`wt_args`/`powershell_args`）拆成纯函数，脱离真实进程/文件系统单测；真正探测/启动依赖真实环境，人工验证。`install_windows_terminal()`（`winget install`）只从 GUI 里一次性提示的按钮触发，绝不静默自动装。
 - **窗口化 GUI 的可测试性边界**：这是本项目第一次交付真正的窗口应用，没有类似 Chrome DevTools 那样的原生窗口自动化点击工具，`cargo test` 覆盖不到交互行为。已做到的自动化验证：`build`/`clippy -D warnings`/`test` 全绿 + 手动后台启动 `aam-gui.exe`、等待几秒确认进程未崩溃、检查内存/句柄符合真实渲染窗口的特征，再关闭；点击/表单可用性这类主观体验，需要用户自己跑一下亲眼看。
 - **模块划分**：`main.rs`（入口）/`app.rs`（顶层 State/Message/路由，含 Windows Terminal 缺失提示条）/`screens/{profiles,providers}.rs`（各自的局部状态+视图+更新逻辑，直接调用 `aam-switcher` 的 `claude_backend`/`codex_backend`/`ProfileRegistry`/`ProviderRegistry`/`provider_secret_store`——跟 `aam-cli::commands.rs` 的 `run_profile`/`run_provider` 调同一套 API，没有另起业务逻辑）。
+
+## 6.8 Phase 4 Round 2 实现记录（已实现）
+
+立项时用户明确要求"GUI 的核心是用户友好性，仔细思考这一点"——这轮把这句话落成了具体、可执行的设计约束，不只是把 CLI 参数堆成表单：
+
+- **信息分层**：项目浏览器（`screens/projects.rs`）默认只显示决定"要不要接续"所需的信息（项目名、`工具·Profile` 徽标、最后活跃时间、本机能不能接续），`projectId`/`discoverySource`/`syncApproved`/`authBackend`/`deviceId` 收进每行的"详情"折叠区，不在主列表劈头列一堆。
+- **单一主操作**：每张项目卡片只有一个突出的主按钮（"接续"），"详情"是次要操作；`style.rs` 的 `primary_button`/`secondary_button`（分别用 `iced::widget::button::primary`/`secondary` 预设样式）在四个屏幕（含 Round 1 的 Profiles/Providers，顺手做了统一）里都用同一套写法，不是新旧屏幕两种视觉语言。
+- **人话错误提示**：目录不存在/Profile 未在本机注册这些情况，复用 `commands.rs::ProjectAction::Resume` 已经打磨过的文案语气（`resumable()`，纯函数，单测覆盖），不是把 Rust 错误类型直接 `format!("{:?}")` 甩出来。
+- **核心安全约束常驻可见**：会话面板（`screens/sessions.rs`）顶部有一条不需要展开就能看到的说明条，"扫描/采集到的会话默认只留在本机，不会自动出现在其他设备"——`05.7`-`05.9` 的硬性约束，不是藏在某个按钮的 tooltip 里。
+- **按行反馈**：项目浏览器的"接续"/"关联"是可能并发触发的逐行操作，回执（`ResumeStatus::Opening`/`Failed`）显示在对应行旁边；会话面板的扫描/采集/批准是整屏批量动作，继续用 Round 1 那种共享状态栏就够，不过度设计。
+- **共享的启动环境逻辑**（`crates/aam-gui/src/launch.rs`，从 `screens/profiles.rs` 重构提出）：`resolve_provider`/`launch_env` 现在是 Profiles 和 Projects 两个屏幕共用的一个模块，不是各自维护一份。
+- **`profiles`/`providers` 数据流**：从 Round 1"每个消费方自己镜像一份 + 手动同步消息"改成 `app::State` 直接持有、按 `&[Profile]`/`&[ProviderRecord]` 引用传给需要的屏幕（`view`/相关 `update` 分支的参数），给 Round 3/4 继续加屏幕铺路，不用每加一屏都抄一遍同步逻辑。
+- **跨线程边界的一个真实坑**：`aam_switcher::Provider` trait 没有 `Send` 约束（也不必为了这一个用例去改这个已有 trait 的公开签名），所以不能在 GUI 主线程构造好 `Box<dyn Provider>` 再整体移进 `perform` 的后台线程闭包——会话面板的"生成摘要"改成把 `(ProviderRecord, api_key)`（纯 `Send` 数据）传进闭包，在闭包内部（已经在后台线程上）才用 `aam_switcher::build_provider` 现场构造，跟 `launch.rs` 的调用方式一致。
+- **`iced::Pixels` 只有 `From<f32>`/`From<u32>`，没有 `From<u16>`**：`style.rs` 的间距常量因此是 `f32` 不是 `u16`（第一次写成 `u16` 时编译器直接报错，不是猜出来的）。
+- **验收边界同 Round 1**：友好与否是主观判断，`cargo test` 只能保证逻辑正确、不崩溃，不能替用户点头——这轮结束后明确请用户自己跑一遍 `aam-gui.exe` 给实际反馈，不是自认为做完了就结束。
