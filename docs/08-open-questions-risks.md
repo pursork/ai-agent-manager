@@ -28,11 +28,11 @@
 | 7 | `age`/`rage` crate 在 Windows 和 Linux 上的 passphrase 模式（scrypt 参数）是否完全一致，避免"设备 A 加密的东西设备 B 解不开"这种跨平台不一致问题 | `04.2` | Phase 2 开发时写一条跨平台集成测试（CI 里 Windows + Linux 两个 runner 互相加解密同一份测试数据） |
 | 16 | `aam sync reencrypt`/`push-account` 依赖本机 `ProviderRegistry`/`ProfileRegistry` 已知道的 id/label 才能覆盖——没有 PROPFIND，无法枚举"vault 上到底有哪些 blob"，如果某账号只在别的设备 push 过、本机从未 pull 过，本机跑 reencrypt 不会碰到它 | `04.9`/`04.10` | 非阻塞，`accounts.json.age`/未来的 provider 目录索引已经缓解"完全发现不了"的问题；真正的多设备联调放在 GUI 交付阶段做，届时验证这个限制的实际影响有多大 |
 
-## 8.4 阻塞 Phase 3 剩余部分（跨设备聚合 + WebDAV 同步）的问题
+## 8.4 阻塞"真正的"跨设备项目身份关联（不阻塞已经交付的部分）的问题
 
 | # | 问题 | 影响范围 | 应对方式 |
 |---|---|---|---|
-| 8 | "项目"的跨设备逻辑身份用什么做主键——物理路径在不同设备上大概率不同 | `05.2`；Phase 3a（本地模型+发现/采集）不需要这个就能工作，`aam project list/show/resume` 目前都是单机视图 | Phase 3b（`aam session sync`/跨设备聚合视图）立项时定：候选方案是引入一个用户可选/可改的 `projectId`（首次记录时生成，允许用户手动关联"设备A的这个路径"和"设备B的那个路径"是同一个逻辑项目），而不是试图自动猜测 |
+| 8 | "项目"的跨设备逻辑身份用什么做主键——物理路径在不同设备上大概率不同 | `05.2`；`aam session sync`/`aam project list` 已经实现，但只是把本机索引和跨设备镜像**拼接**展示，同一逻辑项目在两台设备上会显示成两行，不合并 | `ProjectRecord.projectId` 字段已加（`serde(default)`，`None`），但自动生成/匹配逻辑还没做——候选方案仍是"首次记录时生成，允许用户手动关联"，不试图自动猜测同名/同路径就是同一项目（名字/路径撞车的概率不低，自动合并风险大于价值）|
 | 17 | `aam session adopt --summarize`（`05.8`）需要调用一个 Provider 生成摘要，但 `Provider` trait 今天只有 `materialize`/`verify`/`api_key`，没有"给一段文本，返回补全"的通用能力 | `05.8`；Phase 3a 的 `aam session adopt` 里 `--summarize` 尚未实现（CLI 文档已注明） | Phase 3b 或更早的独立提交：给 `aam-switcher::Provider` 加一个 `complete(prompt) -> Result<String, _>` 之类的方法，Claude/CPA/DeepSeek 各自实现；不在 Phase 3a 里顺手加，因为这是一个会影响 `Provider` trait 公开签名的改动，值得单独过一遍设计 |
 | 18 | `aam` 接管 `project-tracker` 的实时记录能力（生成 hook 脚本 + 改写用户 `~/.claude/settings.json` 的 hooks 配置），而不只是收编脚本内容（`09.10` 已完成的部分） | `05.1` 的结论——`project-tracker` 目前是"实时记录"这一层唯一的实现，`aam` 没有常驻进程/hook 注册机制 | 非阻塞，独立于 Phase 3b 立项：这会直接触碰用户当前生效的工具配置，风险类别与"不改 hook 脚本"这条既有边界（`08` #9）一致，值得单独设计"如何安全地改写别的工具的 settings.json"这件事本身（例如显式命令 + 改前展示 diff + 可回滚），不能在其他任务里顺手做 |
 

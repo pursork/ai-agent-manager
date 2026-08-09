@@ -87,25 +87,33 @@ Memory-Bank 记录里的 `profileLabel` 字段，是"resume 提示"里附加的�
 
 ## 5.6 CLI 交付形态
 
-**Phase 3a 已实现**（本地视图；`aam project list/show/resume` 目前只反映本机索引，跨设备聚合等 Phase 3b 的 `aam session sync` 落地后才有意义）：
+**已实现**：
 
 ```
-aam project list                       # 本机所有已记录项目
+aam project list                       # 本机 + 已同步的跨设备镜像（拼接展示，见下）
 aam project show <name>                # 模糊匹配，打印匹配到的每条记录详情
 aam project resume <name>              # 打印 cd + resume 命令，绝不代跑；Profile 缺失/非官方后端会警告
+                                        # （目前只在本机索引里查找，跨设备 resume 的"本地无该目录"
+                                        #  提示文案见 5.3，尚未实现，是待补的小项）
 
 aam session scan                       # 对已注册的每个 Profile 只读扫描，不改索引（5.7）
 aam session adopt                      # 采集入库：写本地索引，syncApproved=false（5.8）；
                                         # --summarize 尚未实现，见 08 #17
 aam session approve-sync <path...>     # 显式批准回溯采集的条目参与同步（5.9）
 aam session approve-sync --all-scanned # 一次性批准所有 scan 来源、尚未批准的条目
+aam session sync                       # 同步 Memory-Bank 索引：拉取共享 blob → 用本机当前
+                                        # syncApproved 记录替换本机在共享集合里的那部分（不影响
+                                        # 其他设备）→ 写入本机 ~/.aam/memory/remote-index.json
+                                        # 镜像（project-index.json 本身永不被这一步写入，见 08 #9）
+                                        # → 推回去
 ```
 
-**Phase 3b 待实现**：
+`aam project list`/`show` 展示时把本机索引和 `remote-index.json` 镜像简单拼接，**不做真正的跨设备去重**——同一个逻辑项目在两台设备上会显示成两行（各自的 `deviceId`/`profileLabel`），这是有意的：真正按项目身份合并需要 `08` #8 的 `projectId` 关联机制，本轮只加了字段占位，没做匹配逻辑。
+
+**待实现**：
 
 ```
 aam project enable-full-sync <name>    # 显式开启高风险的完整目录同步（Phase 6，见 5.4）
-aam session sync                       # 把 Memory-Bank 索引推到 WebDAV，只推 syncApproved=true 的条目
 ```
 
 ## 5.7 本机会话发现（`aam session scan`）

@@ -81,6 +81,8 @@ aam profile verify <profile-label>     # 单独触发一次存活验证，不切
 
 这组命令行为上是 Codex 侧 `codex-skill` 和 Claude 侧尚不存在的等价物的统一入口，是后续 GUI（Phase 4，`06`）"新建终端标签页时选 Profile"这个交互的直接后端。
 
+**工作目录**：`aam claude/codex <label>` 启动子进程时不设置、也不依赖 `current_dir`——`aam-cli` 的实现（`std::process::Command::new(binary)`）直接继承调用者 shell 当前的工作目录，跟直接跑 `claude`/`codex` 完全一样。用户还是"先 `cd` 到项目目录，再 `aam claude <label>`"，这是刻意的设计而不是遗漏：一来 `05.3` 已经明确"aam 不能替用户 cd"；二来 `project-tracker`（`09.10`）的 SessionStart hook 靠的正是进程真实的工作目录来判断项目路径，`aam` 如果自作主张改了 cwd，会直接破坏这个已经在用的机制。
+
 ## 3.7 Claude Profile 的 Skills 一致性
 
 `3.2` 确认 Claude 侧账号切换用"N 目录 + 启动时选 `CLAUDE_CONFIG_DIR`"模型——这意味着每个 Profile 有自己独立的 `<profile-dir>/skills/`。这带来一个新问题：**用户精心积累的 Skills，会不会因为切换 Profile 就"看不见"了？**
