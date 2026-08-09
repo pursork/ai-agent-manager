@@ -140,4 +140,12 @@ Phase 5 的第一轮，也是全项目第一次嵌入真实 PTY 渲染。按用�
 5. 在一个隔离环境（`USERPROFILE`/`AAM_HOME` 指向临时目录，`aam profile add` 建一个假 Profile，不碰用户真实数据）里点 Profiles 屏的"打开终端（内嵌）"，确认：自动跳转到 Terminal 屏、新标签标题正确显示"embedtest · claude"、环境变量注入正确（`CLAUDE_CONFIG_DIR` 指向了这个隔离 Profile 的目录）——**证据是内嵌终端里真的跑起了 `claude`，并且因为这是全新目录，`claude` 弹出了它自己真实的首次运行主题选择向导，界面渲染（TUI 菜单、colored diff）都正常**。验证到这一步就主动退出（`taskkill /T /F` 杀掉整个进程树，不继续走真实的登录流程），没有产生任何真实的 Claude 账号交互。
 6. 全程没有创建/修改用户真实的 `~/.aam`/`~/.claude` 状态——Profile 创建测试用的是完全独立的临时目录，用完删掉。
 
-**这个方法目前还没做、留给以后需要时再补的部分**：Projects 屏"接续（内嵌）"没有单独截图验证（复用的是跟"打开终端（内嵌）"完全相同的 `open_tab` 调用路径和已经验证过的 `resumable`/`launch_env` 逻辑，边际验证价值低，不是遗漏）；没有验证内嵌终端的鼠标滚动/文本选择/复制粘贴这些次要交互。
+**这个方法目前还没做、留给以后需要时再补的部分**：没有验证内嵌终端的鼠标滚动/文本选择/复制粘贴这些次要交互。
+
+## 6.14 Phase 5 Round 3：接续前确认/更换 Profile（`06.4` 完整体验补完）
+
+用户问"为什么不自动继续、开发任务结束了吗"——之前每轮结束都停下来等一句"继续"，是沿用整个项目一路以来的节奏，但用户明确表示不希望这样，于是这轮开始不再逐轮等待，直接把 `06.4` 唯一还没做的缺口（第 3 步"上次用的 Profile 是 X，是否沿用？"的确认/更换 UI，之前"接续（内嵌）"是直接静默用记录里的 Profile，没有确认/更换这一步）补完，做完自动验证、提交、推送。
+
+- **设计**：`projects::State` 新增 `pending_embedded: HashMap<path, 选中的 label>`。点"接续（内嵌）"（`ResumeEmbeddedRequested`）只是把这一行切换成确认态（pick_list 预选记录里的 Profile，同工具的其它本机 Profile 都能选），不直接开标签页；点"确认"（`ResumeEmbeddedConfirmed`）才真正触发 `app.rs` 里的开标签页逻辑，用的是 `pending_embedded` 里当前选中的 label，不是 `record.profile_label`——所以"更换"是真的会生效的，不是摆设。
+- **自动化验证**（延续 `6.13` 的方法，隔离环境，两个假 Profile `work1`/`work2`，一条指向真实临时目录的假项目记录）：点"接续（内嵌）"截图确认弹出"沿用 Profile: [work1 ▾] 确认 取消"；点下拉框截图确认列出了 `work1`/`work2` 两个选项；选 `work2`、点确认、截图——**新标签标题显示"myproject · claude · work2"**，不是默认的 work1，直接证明了"更换 Profile 真的会被使用"这件事，不是只停留在下拉框选中态。
+- **踩了一个自动化工具本身的坑**：`SetForegroundWindow` 在这轮反复被 Windows 的防抢焦点保护拦截——因为每次真正发起前台切换调用的，都是刚执行完一条新命令、因此重新拿到前台的 PowerShell 控制台本身。加一次合成 Alt 键敲击（`SendInput` 按下+抬起 `VK_MENU`）再调用 `SetForegroundWindow` 解决——这是绕过这层保护的标准技巧。已经记进个人记忆（不是项目文档该记的内容，纯粹是这次用到的自动化工具本身的坑）。
